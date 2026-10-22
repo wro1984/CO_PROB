@@ -1,0 +1,8 @@
+{
+  "name": "problemas-sistemicos",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/cripto.test.js tests/formato.test.js tests/caixa.test.js tests/push.test.js",
+    "test:worker": "cd worker && npm install && npm test"
+  }
+}

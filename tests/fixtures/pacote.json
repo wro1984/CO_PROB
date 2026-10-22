@@ -1,0 +1,64 @@
+{
+ "pacote": {
+  "app": "problemas-sistemicos",
+  "v": 1,
+  "gerado_em": "2026-10-22T18:41:08+00:00",
+  "kdf": {
+   "alg": "PBKDF2-SHA256",
+   "iter": 600000
+  },
+  "acessos": {
+   "d124856db08c716e6c843f924e24c1f22d865346d173545664831cfc197c2ed2": {
+    "salt": "Ai4sBCjGUdBl9epDimb8XA==",
+    "iv": "O69PC+YI3L8pBBas",
+    "ct": "TDOCP9X0Sm0xXBJMnFY80m0AWW7822fx4WnK5fBSVcsAF6JFSzdKnpzJEOzQK0h0",
+    "tk": {
+     "iv": "+lpC7BxmorCRF0GD",
+     "ct": "/nNFdl9LqLyRnSOlQ+stsbe+1uXUOxKawWM1j4nmrcfc+95282wr1ephrQbOx9F7"
+    }
+   },
+   "0fffb3d2173922f057a16aa4ddb64e5d4154e7b946a84c7e3fbce2626d70a678": {
+    "salt": "Xk5yJwFsCHXG74wcAfcTyA==",
+    "iv": "hT3fB50HlzZ+fVeZ",
+    "ct": "ZyebVfShxPWGhvV7S15fVU9h3lhkYMoMsWb4pPKba9JR2cu0aLG/Uq4bIyo1ws6y",
+    "tk": {
+     "iv": "DiGD2sZqwmac4qbY",
+     "ct": "PunWp9ISCY9gEJAyji6zXWSxne+T/WoZ5NdhUUE21SrwK25exD9mNxkGtSK9oVId"
+    }
+   }
+  },
+  "dados": {
+   "iv": "x0FjJ9wofh9AqJdY",
+   "ct": "7RVmgRBQouIB6UimrAQj74GgDI/fDH/WPufMAl8jhXD4lMDbYyhuoxpxCKRsNZfzqCLV4sW/4wxHvwOdSbsAWNB+7CW0sCZ0HIyYcXNrThYDV6VnKknlSgH5NI5HX22LPSfDGbHYonFWSfV8VuN1agnoS6DJBeXhylaTVQ1gn6Y55IaEm7ife9nqp8a28YC6O+nTqshr4oGMFIpLTgSwyUnGcGoY7c7nzcYC7Kx/CFqeioRGiRONwC0oWuUsM7F8/EXXiWdBVVlDAQPuPj0f7ZUJ1n7wsUsKqZ1Uv2/fVg2Qs2E6NPvrolhPp45DnZt6yW83d/+IOvvKRSxBv+WmyFWErr2ysyZuXqK4DZitJ3fl3i0XRRo/KzNNdYrPsYpVyiLeDC3z2zBLHa+4mu7957CXCjsd3PzOyFmQQV2Y+F/0wbzaUFYVF5ATTtnJmT4qAFvICgqZCTRA2lNSHPXSunjTFWRIG4c1nKPBxiAWTcddVl6gElN1WRmwygGJT0OBJ4IsmtmyxG/neGO8ARZYm4nDsrcOCkexwfiI3AAog3hnDAyJQOt0G4I4pGkKD7zagk5KKpSup+/it+eawIVxEZpTjCoarUyaZgICrwWqIebnjzTqkDpGgnQGrS19sciV7t9OlxWJ9SPdCO8qybhUfwcOrFKZ/bGAirIQ/MdOnAAoc+8QAC8XhKApeAJpP1awvB/DIMoyKXS+jL0dNb5ihABnOc9u73aH0zUI/XYc+zc4rKDjA+ORh2Qu1hEw0TIzsNDOCas23wrqI9HYyXVqjVD2XlfsuWrZr5tT7wB5insPbQ6ah+PL21IWeJlz9pgg9oiMe4ogZuS7fgqE033NRW+skLHxRXBrwuLUxZbmmv8VJtiTVg=="
+  },
+  "notificacoes": {
+   "iv": "d1mPymfj4aZ492U4",
+   "ct": "co+SKWm9ci8E+YOkxHrsYKeg+AX43vCcMjXR8kwrcROuOcj56a6RsqDX1XZk3fAnbjO+dthb4lRex2rxPO09djBc4aa5fzIb7azoPQ7RBuFK/Qfd12TKaKubJngT1xaXKSfPLMQiTkk3mFM7mg1QMSJt5W5HXT0ep0y+hlgcbgXM/4XaBu8dw0GLhFCO0v5wSQIzxH49l/R/BX95cqL/OLB4bMmz/3ZpSr144e7hSbBK2+gMXk+4LqSJI/uz9xfX7beT9TSQzna2cF4cOjqZPYeJVggZ4r1nPC0AbWPqqBOry4Kwk47VlwiGU+Q7WtXB0IqZT/KYqbAN/tJWaNzqSSLxoB9nkTv1/xwBsetki64VDnT2CM4go2VtsU/X6GYVktCxMFJOoIcL/hObafz+FZnXqRT/KFLtFarXFALGB4qgPsJHl1OehTjbIsKD2F3KE6Hod2sb7L1RUPvdESbb/4xfWUizM4LPBhVosCy7um7pmJ4N6Vq/Bqc+FoF0ga9np7wLeHdVVA=="
+  },
+  "push": {
+   "chave": "BFWuFYSVUbn6VhKEPLpnkEGZDpNbF0XUpAr2v9KNsBr8GqWkKdOSNVPHxCb122haMX1mXakEsrVxn_wACyxzA_k"
+  }
+ },
+ "acessos_teste": [
+  {
+   "matricula": "A0001",
+   "chave": "ABCD-2345-EFGH-6789"
+  },
+  {
+   "matricula": "B0002",
+   "chave": "Girassól 2026!"
+  }
+ ],
+ "esperado": {
+  "dados": "ID\tSISTEMA\tCHAMADO\tSTATUS\tCRITICIDADE\tEVOLUCAO\tSEGMENTO\tIMPACTO_OPERACIONAL\tDATA_INICIO\tDATA_FIM\tTIPO_FALHA\tGRUPOS_RESPONSAVEIS\tGRUPOS_IMPACTADOS\tAREA_ACIONADA\tALERTA_ENVIADO\tDATA_ATUALIZACAO\tDADO_ATUALIZADO\tTEMPO_DECORRIDO\tFLAG\n311\tSISTEMA EXEMPLO A\tINC0000001\tABERTO\tP3\tEM ANÁLISE\tB2B, B2C\tFalha de exemplo ao transferir\t20/10/26 08:22:00,000000000\t\tINDISPONIBILIDADE PARCIAL\tGRUPO RESPONSAVEL EXEMPLO\tCENTRALIZADA, CENTRO DE OPERAÇÕES\tAREA EXEMPLO\t0\t20/10/26 08:39:31,000000000\t\t\t\n310\tSISTEMA EXEMPLO B\t\tFECHADO\tP3\tNORMALIZADO\tB2C\t\t19/10/26 12:00:00,000000000\t19/10/26 14:00:00,000000000\tINTERMITÊNCIA\t\t\t\t0\t19/10/26 18:19:16,000000000\t\t\t\n",
+  "notificacoes": "ID\tTIPO\tTITULO\tTEXTO\tDATA_INICIO\tDATA_FIM\tOBRIGATORIO\tSTATUS\tDATA_ATUALIZACAO\n1\tCRITICO\tPortal fora do ar\tO {b}Portal{/b} caiu {pink}agora{/pink}.\\n\\nContorno: {link=https://exemplo.com}site{/link}\\\\fim tab\t2026-10-22 08:00:00\t\tS\tATIVO\t2026-10-22 09:00:00\n2\tINFORMACAO\tAviso com acentuação: ação, coração\tTexto simples.\t\t2026-11-01 18:00:00\tN\tATIVO\t2026-10-22 09:30:00\n",
+  "push_chave": "BFWuFYSVUbn6VhKEPLpnkEGZDpNbF0XUpAr2v9KNsBr8GqWkKdOSNVPHxCb122haMX1mXakEsrVxn_wACyxzA_k",
+  "push_secret_a0001": "7c6f02361971651601c1628495d233cd27082373776619206675c4e9e43a0d05",
+  "mac": {
+   "endpoint": "https://fcm.googleapis.com/fcm/send/exemplo",
+   "p256dh": "BExemploP256dh",
+   "auth": "ExemploAuth",
+   "mac": "89abd2c9772bdd11614c9de5ecf6bb6828b516764241b4b380b43db0fda46275"
+  }
+ }
+}

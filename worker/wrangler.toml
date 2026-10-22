@@ -1,0 +1,23 @@
+name = "problemas-sistemicos-caixa"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+# Cron diário (03:00 UTC): apaga pedidos e inscrições antigos.
+[triggers]
+crons = ["0 3 * * *"]
+
+[vars]
+# Origens do app que podem chamar a caixa (separadas por vírgula; sem barra no final).
+ORIGENS_PERMITIDAS = "https://wro1984.github.io"
+LIMITE_POR_HORA = "30"        # pedidos por origem (IP) por hora; escritórios compartilham IP, por isso é folgado
+LIMITE_GLOBAL_HORA = "300"    # pedidos por hora no total
+LIMITE_PUSH_HORA = "60"       # inscrições de push por origem por hora
+MAX_PUSH_PENDENTES = "2000"   # teto de inscrições esperando o MAPI buscar
+RETENCAO_DIAS = "30"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "problemas-sistemicos"
+database_id = "COLE-AQUI-O-ID-DO-BANCO"
+
+# Segredo (NÃO vai neste arquivo):  npx wrangler secret put MAPI_CHAVE
