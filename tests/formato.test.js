@@ -51,6 +51,9 @@ test('o app lê o TXT dos chamados que o MAPI gera', () => {
   assert.equal(r.GRUPOS_IMPACTADOS, 'CENTRALIZADA, CENTRO DE OPERAÇÕES');
   assert.equal(JSON.stringify([r._ini.getFullYear(), r._ini.getMonth(), r._ini.getDate(), r._ini.getHours(), r._ini.getMinutes()]), '[2026,9,20,8,22]');
   assert.equal(r._fim, null);
+  // estágio gerado pelo MAPI: campo entre aspas com quebra de linha e aspas internas, lido inteiro e sem criar chamado falso
+  assert.equal(r.ESTAGIO, 'Chamado aberto e encaminhado.\nEquipe realizando "análise" inicial.');
+  assert.equal(p.rows.find(x => x.ID === '310').ESTAGIO, '');
   const f = p.rows.find(x => x.ID === '310');
   assert.equal(f._fim.getHours(), 14);
   assert.equal(f.TIPO_FALHA, 'INTERMITÊNCIA');
