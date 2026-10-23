@@ -26,7 +26,7 @@
 (function (root) {
   'use strict';
 
-  const VERSAO = '1.18.0';
+  const VERSAO = '1.31.0';
   const C = (root.crypto && root.crypto.subtle) ? root.crypto : null;
   const enc = new TextEncoder();
   const APP = 'problemas-sistemicos', PREFIXO = 'ps:';

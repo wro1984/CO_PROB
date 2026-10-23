@@ -5,7 +5,7 @@
    Vale só STATUS = ATIVO e dentro das datas (sem início = já vale; sem fim = vale até alguém desativar). */
 (function () {
   'use strict';
-  const VERSAO = '1.18.0';
+  const VERSAO = '1.31.0';
   const K = { lidas: 'ps.notif.lidas' };
   const OBRIG = ['ID', 'TIPO', 'TITULO', 'TEXTO'];
   const TAGS = ['b', 'i', 's', 'm', 'roxo', 'verde', 'laranja', 'pink', 'link'];
@@ -146,6 +146,9 @@
     return bg;
   }
   const X = '<button class="nt-x" id="ntX" aria-label="Fechar">✕</button>';
+  const SETA = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg>';
+  const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
+  const XIS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
   function desenhar() {
     const bg = montar(), box = bg.querySelector('#nt'), m = N.modal; if (!m) return;
     const at = ativas();
@@ -154,22 +157,28 @@
       if (!it) { fechar(); return; }
       const pend = it.obrig && !lida(it);
       box.className = `nt t-${it.tipo}`;
-      box.innerHTML = `<div class="nt-top">${m.daLista ? '<button class="nt-x nt-volta" id="ntVolta" aria-label="Voltar para a lista" title="Voltar para a lista"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button>' : ''}<span class="sp"></span>${X}</div>
-        <div class="nt-h"><span class="nt-ic">${ICONE[it.tipo]}</span><h3 id="ntTit">${esc(it.titulo || NOME[it.tipo])}</h3></div>
+      // botões embaixo (não empurram o texto): Ciente (se obrigatória) e, numa linha, Voltar e Fechar com a mesma largura
+      box.innerHTML = `<div class="nt-h"><span class="nt-ic">${ICONE[it.tipo]}</span><h3 id="ntTit">${esc(it.titulo || NOME[it.tipo])}</h3></div>
         <div class="nt-corpo">${html(it.texto)}</div>
-        ${pend ? '<button class="nt-ciente" id="ntCiente">Ciente</button>' : ''}`;
+        <div class="nt-acoes">${m.daLista ? `<button class="nt-bt" id="ntVolta" aria-label="Voltar para a lista">${SETA}<span>Voltar</span></button>` : ''}${pend ? `<button class="nt-bt nt-ciente" id="ntCiente">${CHECK}<span>Ciente</span></button>` : ''}<button class="nt-bt" id="ntX" aria-label="Fechar">${XIS}<span>Fechar</span></button></div>`;
       if (!it.obrig && !lida(it)) { marcarLida(it); renderBotao(at); }
       if (pend) box.querySelector('#ntCiente').onclick = () => { marcarLida(it); renderBotao(ativas()); if (m.daLista) { N.modal = { modo: 'lista' }; desenhar(); } else fechar(); };
       if (m.daLista) box.querySelector('#ntVolta').onclick = () => { N.modal = { modo: 'lista' }; desenhar(); };
     } else {
       if (!at.length) { fechar(); return; }
       box.className = 'nt nt-lista';
-      box.innerHTML = `<div class="nt-top"><h3 id="ntTit">Notificações</h3><span class="sp"></span>${X}</div>
-        <div class="nt-itens">${[...at.filter(x => !lida(x)), ...at.filter(x => lida(x))].map(it => { const l = lida(it); return `<button class="nt-it${l ? ' lida' : ''}" data-nid="${esc(it.id)}"><span class="nt-ic">${ICONE[it.tipo]}</span><span class="nt-tt">${esc(it.titulo || NOME[it.tipo])}</span><span class="nt-pt" aria-label="${l ? 'lida' : 'não lida'}"></span></button>`; }).join('')}</div>`;
+      // lista: o título e o ✕ ficam parados no topo; só a lista rola
+      // contador: só o total quando nada foi lido "(10)"; depois não lidas/total "(9/10)" … "(0/10)"
+      const nl = at.filter(x => !lida(x)).length, cont = nl === at.length ? `${at.length}` : `${nl}/${at.length}`;
+      box.innerHTML = `<div class="nt-top"><h3 id="ntTit">Notificações <span class="nt-cont num" aria-label="${nl} não lida${nl === 1 ? '' : 's'} de ${at.length}">(${cont})</span></h3><span class="sp"></span>${X}</div>
+        <div class="nt-itens">${[...at.filter(x => !lida(x)), ...at.filter(x => lida(x))].map(it => { const l = lida(it); return `<button class="nt-it${l ? ' lida' : ''}${it.obrig && !l ? ' obrig' : ''}" data-nid="${esc(it.id)}"><span class="nt-ic">${ICONE[it.tipo]}</span><span class="nt-tt">${esc(it.titulo || NOME[it.tipo])}</span><span class="nt-pt" aria-label="${l ? 'lida' : 'não lida'}"></span></button>`; }).join('')}</div>`;
       box.querySelectorAll('.nt-it').forEach(b => b.onclick = () => { N.modal = { modo: 'uma', id: b.dataset.nid, daLista: true }; desenhar(); });
+      // barra de rolagem só enquanto a lista se mexe (some ~0,8 s depois de parar)
+      const li = box.querySelector('.nt-itens'); let tm;
+      li.addEventListener('scroll', () => { li.classList.add('rolando'); clearTimeout(tm); tm = setTimeout(() => li.classList.remove('rolando'), 800); }, { passive: true });
     }
     box.querySelector('#ntX').onclick = () => fechar();
-    box.scrollTop = 0;
+    box.scrollTop = 0; const li = box.querySelector('.nt-itens'); if (li) li.scrollTop = 0;
   }
   function abrir(m) {
     const novo = !N.modal;
@@ -181,7 +190,7 @@
   // porHistorico = já veio do botão voltar do aparelho
   function fechar(porHistorico) {
     if (!N.modal) return;
-    N.modal = null; const bg = document.getElementById('ntBg'); if (bg) bg.hidden = true; document.body.classList.remove('nt-on'); if (!document.body.classList.contains('sheet-on')) document.documentElement.classList.remove('trava');
+    N.modal = null; const bg = document.getElementById('ntBg'); if (bg) bg.hidden = true; document.body.classList.remove('nt-on'); if (!document.body.matches('.sheet-on, .al-on')) document.documentElement.classList.remove('trava');
     if (!porHistorico && N.hist) { N.hist = false; N.ignorarPop = true; history.back(); } else N.hist = false;
     setTimeout(proximaObrigatoria, 50);
   }
@@ -193,7 +202,7 @@
   // Fechou uma (✕ ou Ciente) → abre a próxima. Com "Ciente" não abre sozinha de novo;
   // fechada só no ✕, volta a abrir na próxima vez que o app for aberto.
   function proximaObrigatoria() {
-    if (N.modal || !N.pronto || document.querySelector('.sheet.show')) return;
+    if (N.modal || !N.pronto || document.querySelector('.sheet.show') || document.body.classList.contains('al-on')) return;
     const it = ativas().filter(x => x.obrig && !lida(x) && !N.autoVistos.has(x.id + '|' + x.versao))
       .sort((a, b) => a.id.localeCompare(b.id, 'pt-BR', { numeric: true }))[0];
     if (!it) return;
@@ -212,6 +221,7 @@
 
   window.PSNotif = {
     versao: VERSAO, ler, html, ativas, aplicar, atualizar, tocarBotao, fechar,
+    icone: t => ICONE[t] || ICONE.INFORMACAO,
     iniciar() { N.pronto = true; atualizar(); },
     aberto: () => !!N.modal,
     consumirPop: () => { if (N.ignorarPop) { N.ignorarPop = false; return true; } return false; },

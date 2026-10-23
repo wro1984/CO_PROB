@@ -5,26 +5,31 @@
    status por ID. O que fica no aparelho é o pacote cifrado e um cofre cifrado com chave do aparelho. */
 'use strict';
 
-const VERSION = '1.18.0';
+const VERSION = '1.31.0';
 const POLL_MS = 60 * 1000;           // conferência do arquivo
 const TICK_MS = 5 * 1000;            // relógio dos tempos em andamento
-const RECENT_MS = 60 * 60 * 1000;    // selo NOVO / MUDOU vale por 1 hora
+const RECENT_MS = 60 * 60 * 1000;    // selo NOVO / ALTERAÇÕES vale por 1 hora
 const LOG_MAX = 300;                 // mudanças guardadas no aparelho
-const HIST_STEP = 7;                 // dias do histórico por vez
+// histórico: ao entrar mostra o mês atual e o anterior; depois, um mês por vez ("Mostrar mês de Agosto")
+const MESES_LONGO = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 
 const REQUIRED = ['ID', 'SISTEMA', 'STATUS', 'DATA_INICIO'];
-const KNOWN = ['ID', 'SISTEMA', 'CHAMADO', 'STATUS', 'CRITICIDADE', 'EVOLUCAO', 'SEGMENTO', 'IMPACTO_OPERACIONAL',
+const KNOWN = ['ID', 'SISTEMA', 'CHAMADO', 'STATUS', 'CRITICIDADE', 'EVOLUCAO', 'SEGMENTO', 'IMPACTO_OPERACIONAL', 'ESTAGIO',
   'DATA_INICIO', 'DATA_FIM', 'TIPO_FALHA', 'GRUPOS_RESPONSAVEIS', 'GRUPOS_IMPACTADOS', 'AREA_ACIONADA',
   'ALERTA_ENVIADO', 'DATA_ATUALIZACAO', 'DADO_ATUALIZADO', 'TEMPO_DECORRIDO'];
-// campos acompanhados: mudança em qualquer um entra em "Últimas mudanças"
-const TRACK = [['STATUS', 'Status'], ['EVOLUCAO', 'Evolução'], ['DATA_FIM', 'Fim'], ['CRITICIDADE', 'Criticidade'], ['TIPO_FALHA', 'Tipo de falha']];
+// campos acompanhados: mudança em QUALQUER campo do chamado entra em "Últimas mudanças" e marca o card
+// (ficam de fora só os de controle, que mudam a toda atualização: DATA_ATUALIZACAO, DADO_ATUALIZADO, TEMPO_DECORRIDO, FLAG)
+const TRACK = [['SISTEMA', 'Sistema'], ['CHAMADO', 'Chamado'], ['STATUS', 'Status'], ['CRITICIDADE', 'Criticidade'], ['EVOLUCAO', 'Evolução'], ['SEGMENTO', 'Segmento'],
+  ['IMPACTO_OPERACIONAL', 'Impacto'], ['DATA_INICIO', 'Início'], ['DATA_FIM', 'Fim'], ['TIPO_FALHA', 'Tipo de falha'], ['GRUPOS_RESPONSAVEIS', 'Grupos responsáveis'],
+  ['GRUPOS_IMPACTADOS', 'Grupos impactados'], ['AREA_ACIONADA', 'Área acionada'], ['ALERTA_ENVIADO', 'Alerta enviado'], ['ESTAGIO', 'Estágio']];
 
 // colunas que continuam sendo lidas (mudanças, conferência), mas não aparecem nos cards nem no detalhe
 const OCULTAS = ['FLAG', 'TEMPO_DECORRIDO', 'DADO_ATUALIZADO', 'DATA_ATUALIZACAO'];
 
 const K = { pkg: 'ps.pkg', cofre: 'ps.cofre', bell: 'ps.bell', pushReg: 'ps.pushReg', pedido: 'ps.pedido' };
-// o que versões anteriores (sem login) guardavam em texto aberto no aparelho: é migrado para o cofre e apagado
-const LEGADO = ['ps.data', 'ps.snap', 'ps.log', 'ps.notif'];
+// o que versões anteriores (sem login) guardavam em texto aberto no aparelho: é migrado para o cofre e apagado.
+// Os cards fixados (alfinete) também ficam só no cofre cifrado: aqui não existe mais dado do chamado em texto aberto.
+const LEGADO = ['ps.data', 'ps.snap', 'ps.log', 'ps.notif', 'ps.pins'];
 
 /* ---------- armazenamento no aparelho ---------- */
 function load(key, fallback) {
@@ -120,20 +125,54 @@ function stClass(s) { s = up(s); return s === 'ABERTO' ? 'a' : s === 'FECHADO' |
 const statusTag = s => `<span class="st ${stClass(s)}">${esc(s || '—')}</span>`;
 
 /* ---------- leitura do arquivo ---------- */
+// Separa o arquivo em registros e campos (tabulação), respeitando aspas como o Oracle SQL Developer exporta:
+// campo entre aspas pode ter quebra de linha, tabulação e aspas ("" = uma aspa). Devolve { regs: [{ v, ln }], aberto }.
+function splitTsv(text) {
+  const t = String(text || '').replace(/^\uFEFF/, ''), regs = [];
+  let campo = '', reg = [], ln = 1, ini = 1, i = 0, n = t.length;
+  const fechaReg = () => { reg.push(campo); campo = ''; if (reg.length > 1 || reg[0].trim() !== '') regs.push({ v: reg, ln: ini }); reg = []; };
+  while (i < n) {
+    const ch = t[i];
+    if (ch === '"' && campo === '') {          // campo entre aspas
+      i++;
+      while (true) {
+        if (i >= n) return { regs, aberto: ini };   // aspas sem fechamento: arquivo cortado ou estrutura quebrada
+        const c = t[i];
+        if (c === '"') { if (t[i + 1] === '"') { campo += '"'; i += 2; continue; } i++; break; }
+        if (c === '\r' && t[i + 1] === '\n') { campo += '\n'; i += 2; ln++; continue; }
+        if (c === '\n' || c === '\r') ln++;
+        campo += c === '\r' ? '\n' : c; i++;
+      }
+      continue;
+    }
+    if (ch === '\t') { reg.push(campo); campo = ''; i++; continue; }
+    if (ch === '\r' || ch === '\n') { if (ch === '\r' && t[i + 1] === '\n') i++; i++; fechaReg(); ln++; ini = ln; continue; }
+    campo += ch; i++;
+  }
+  if (campo !== '' || reg.length) fechaReg();
+  return { regs, aberto: 0 };
+}
 function parseTxt(text) {
-  const lines = String(text || '').replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim() !== '');
+  const sp = splitTsv(text);
+  if (sp.aberto) return { ok: false, err: `aspas sem fechamento a partir da linha ${sp.aberto} (arquivo cortado ou com a estrutura quebrada)` };
+  const lines = sp.regs;
   if (lines.length < 2) return { ok: false, err: 'arquivo vazio ou só com o cabeçalho' };
-  const cols = lines[0].split('\t').map(c => c.trim().toUpperCase());
+  const cols = lines[0].v.map(c => c.trim().toUpperCase());
   const miss = REQUIRED.filter(c => !cols.includes(c));
   if (miss.length) return { ok: false, err: 'faltam as colunas ' + miss.join(', ') + ' (o arquivo precisa ser separado por tabulação)' };
+  // estrutura: registro com número de colunas diferente do cabeçalho = algum campo livre quebrou a linha sem aspas
+  const tortos = lines.slice(1).filter(l => l.v.length !== cols.length);
+  if (tortos.length && tortos.length > Math.max(2, (lines.length - 1) * 0.05)) return { ok: false, err: `${tortos.length} registros com número de colunas diferente do cabeçalho (a partir da linha ${tortos[0].ln}): estrutura quebrada; mantidos os últimos dados válidos` };
   const warns = [];
   const byId = new Map();
   for (let i = 1; i < lines.length; i++) {
-    const v = lines[i].split('\t');
+    const v = lines[i].v;
     const r = {};
     cols.forEach((c, j) => { r[c] = (v[j] == null ? '' : v[j]).trim(); });
-    const ln = i + 1;
+    const ln = lines[i].ln;
+    if (v.length !== cols.length) warns.push(`Linha ${ln} (ID ${r.ID || '?'}): ${v.length} colunas, o cabeçalho tem ${cols.length}`);
     if (!r.ID) { warns.push(`Linha ${ln}: sem ID, ignorada`); continue; }
+    if (!idOk(r.ID)) { warns.push(`Linha ${ln}: ID inválido ("${r.ID.slice(0, 30)}…"), ignorada`); continue; }
     r._ini = parseDate(r.DATA_INICIO);
     if (!r._ini) { warns.push(`Linha ${ln} (ID ${r.ID}): DATA_INICIO inválida ("${r.DATA_INICIO}"), ignorada`); continue; }
     r._fim = parseDate(r.DATA_FIM);
@@ -155,7 +194,7 @@ function parseTxt(text) {
 /* ---------- comparação por ID ---------- */
 function snapOf(rows) {
   const s = {};
-  rows.forEach(r => { s[r.ID] = { STATUS: r.STATUS, EVOLUCAO: r.EVOLUCAO || '', DATA_FIM: r.DATA_FIM || '', CRITICIDADE: r.CRITICIDADE || '', TIPO_FALHA: r.TIPO_FALHA || '', U: r.DATA_ATUALIZACAO || '', SIS: r.SISTEMA, INC: r.CHAMADO || '' }; });
+  rows.forEach(r => { const o = { U: r.DATA_ATUALIZACAO || '', SIS: r.SISTEMA, INC: r.CHAMADO || '' }; for (const [f] of TRACK) if (f in r) o[f] = r[f] || ''; s[r.ID] = o; });
   return s;
 }
 function diff(prev, rows, at) {
@@ -169,6 +208,7 @@ function diff(prev, rows, at) {
     if (!p) { out.push({ ...base, kind: 'novo', st: r.STATUS, evo: r.EVOLUCAO || '' }); continue; }
     const ch = [];
     for (const [f, label] of TRACK) {
+      if (!(f in p)) continue;   // campo que a cópia anterior ainda não guardava (ex.: depois de atualizar o app): não é mudança
       const a = p[f] || '', b = r[f] || '';
       if (a !== b) ch.push({ f, label, de: a, para: b });
     }
@@ -237,15 +277,32 @@ const S = {
   pkgText: '',            // dados.json (cifrado) da última leitura
   apiPauseUntil: 0,
   busy: false,
-  filter: 'todos', q: '', fSis: '', histDays: HIST_STEP, feedAll: false,
+  filter: 'todos', q: '', fSis: '', histCorte: null, feedAll: false,
   tab: 'oc', sheet: null,       // sheet: {mode:'det'|'list', id, list:{titulo, sub, ids, onClose}}
 };
 if (!Array.isArray(S.log)) S.log = [];
+S.pins = [];   // cards fixados, o mais recente primeiro (vem do cofre cifrado; ver restaurar/guardar)
+// limpeza de restos de leitura errada: versões antigas (antes da 1.30) partiam o arquivo quando um campo livre
+// tinha quebra de linha, e pedaços de texto viravam "chamados" (ID = texto). ID válido não tem espaço nem aspas.
+const idOk = id => /^[^\s"]{1,30}$/.test(String(id == null ? '' : id));
+function limparRestos() {
+  try {
+    if (S.snap && Object.keys(S.snap).some(k => !idOk(k))) { S.snap = null; S.limparSaiu = true; }   // cópia de comparação corrompida: recomeça do próximo arquivo, sem mudanças falsas
+    S.log = S.log.filter(c => c.id == null ? (c.kind !== 'saiu-varios' || (c.ids || []).every(idOk)) : idOk(c.id));
+    S.pins = (Array.isArray(S.pins) ? S.pins : []).filter(idOk);
+  } catch (e) { /* segue sem limpar */ }
+}
 
 function applyText(text, meta, fromStore) {
   const p = parseTxt(text);
   if (!p.ok) return p;
   S.rows = p.rows; S.cols = p.cols; S.warns = p.warns; S.text = text;
+  if (S.limparSaiu) {   // depois de cópia corrompida: "saiu do arquivo" de chamado que continua no arquivo era falso
+    S.limparSaiu = false;
+    const tem = new Set(p.rows.map(r => r.ID)), antes = S.log.length;
+    S.log = S.log.filter(c => !((c.kind === 'saiu' && tem.has(c.id)) || (c.kind === 'saiu-varios' && (c.ids || []).length && c.ids.every(i => tem.has(i)))));
+    if (S.log.length !== antes) guardarCofre();
+  }
   if (meta) { S.etag = meta.etag || S.etag; S.source = meta.source || S.source; S.loadedAt = meta.loadedAt || S.loadedAt; }
   if (!fromStore) {
     const at = new Date().toISOString();
@@ -287,9 +344,13 @@ async function aplicarPacote(pkgText, meta, fromStore) {
 let cofreT = 0;
 function guardar() {
   S.saveErr = !save(K.pkg, { text: S.pkgText, etag: S.etag, source: S.source, loadedAt: S.loadedAt });
+  guardarCofre();
+}
+// só o cofre (mudanças vistas e cards fixados): usado também quando a pessoa fixa ou solta um card
+function guardarCofre() {
   clearTimeout(cofreT);
   cofreT = setTimeout(async () => {
-    const selo = await PSCripto.selar({ snap: S.snap, log: S.log });
+    const selo = await PSCripto.selar({ snap: S.snap, log: S.log, pins: S.pins });
     try { if (selo) localStorage.setItem(K.cofre, selo); } catch (e) { /* sem espaço: o pacote guardado basta */ }
   }, 300);
 }
@@ -437,6 +498,7 @@ function recentKind(id, now) {
   }
   return '';
 }
+const ordemAtivas = (open = openRows()) => S.pins.map(id => open.find(r => r.ID === id)).filter(Boolean).concat(open.filter(r => !S.pins.includes(r.ID)));
 const openRows = () => S.rows.filter(isOpen).sort((a, b) => critRank(a.CRITICIDADE) - critRank(b.CRITICIDADE) || a._ini - b._ini);
 
 // linha de chamado (Chamados de hoje, Histórico e listas do Painel)
@@ -445,11 +507,11 @@ const idCap = id => id ? `<span class="idc num" title="ID ${esc(id)}">${esc(id)}
 function hiRow(r, now, comDia) {
   const t = tipo(r), ind = isInd(r), ab = isOpen(r);
   const d0 = comDia ? fDM(r._ini) + ' ' : '';
-  const range = r._fim ? (sameDay(r._ini, r._fim) ? `${d0}${fHM(r._ini)}–${fHM(r._fim)}` : `${fDM(r._ini)} ${fHM(r._ini)}–${fDM(r._fim)} ${fHM(r._fim)}`) : `${d0}${fHM(r._ini)}–${ab ? 'agora' : 'sem fim'}`;
+  const range = `${d0}${fHM(r._ini)}`;   // só o início (o fim fica no detalhe)
   const du = ab ? `<span data-since="${r._ini.getTime()}">${fDur(now - r._ini)}</span>` : r._fim ? fDur(r._fim - r._ini) : '–';
   const st = ab ? 'em andamento' : ind ? 'Indevido' : cap(r.EVOLUCAO || r.STATUS);
-  return `<button class="hi${ind ? ' ind' : ''}${ab ? ' aberto' : ''}" data-id="${esc(r.ID)}" style="--fc:${t.c}"><span class="bar"></span>
-    <div style="min-width:0"><div class="s">${idCap(r.ID)}<span class="nm">${esc(r.SISTEMA)}</span></div><div class="d num">${range} · ${esc(t.n)}${r.CHAMADO ? ' · ' + esc(r.CHAMADO) : ''}</div></div>
+  return `<button class="hi k-${t.k}${ind ? ' ind' : ''}${ab ? ' aberto' : ''}" data-id="${esc(r.ID)}" style="--fc:${t.c}"><span class="bar"></span>
+    <div style="min-width:0"><div class="s">${idCap(r.ID)}<span class="nm">${esc(r.SISTEMA)}</span></div><div class="d num"><span class="dr">${range}</span><span class="cap-t k-${t.k}">${esc(t.longo)}</span></div></div>
     <div class="du num">${du}<small>${esc(st)}</small></div></button>`;
 }
 
@@ -462,26 +524,128 @@ function renderOpen() {
   const bd = $('navBd'); bd.hidden = !open.length; bd.textContent = open.length;
   if (!open.length) {
     const last = S.rows.filter(r => !isInd(r) && r._fim).sort((a, b) => b._fim - a._fim)[0];
-    $('open').innerHTML = `<div class="calm-card" role="status"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/></svg><div><b>Nenhuma ocorrência ativa</b>` +
-      (last ? `<span>Todos os sistemas operando. Último normalizado: ${esc(last.SISTEMA)} · ${sameDay(last._fim, new Date()) ? 'hoje' : fDM(last._fim)} às ${fHM(last._fim)}</span>` : '<span>Todos os sistemas operando.</span>') + `</div></div>`;
+    $('open').innerHTML = `<div class="calm-card" role="status"><div class="cc-top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/></svg><div class="cc-tx"><b>Nenhuma ocorrência ativa</b><span>Todos os sistemas operando.</span></div></div>` +
+      (last ? `<div class="ult"><small>Último normalizado:</small><div class="us"><span class="cc-id num">${esc(last.ID)}</span><span class="cc-nm">${esc(last.SISTEMA)} · ${sameDay(last._fim, new Date()) ? 'hoje' : fDM(last._fim)} às ${fHM(last._fim)}</span></div></div>` : '') + `</div>`;
     return;
   }
-  $('open').innerHTML = open.map(r => {
-    const t = tipo(r), rk = recentKind(r.ID, now);
+  const ordem = ordemAtivas(open);
+  $('open').innerHTML = ordem.map(r => {
+    const t = tipo(r), rk = recentKind(r.ID, now), fx = S.pins.includes(r.ID), al = r.ALERTA_ENVIADO === '1';
     const ini = sameDay(r._ini, new Date()) ? 'hoje' : fDM(r._ini);
     const seg = segTxt(r.SEGMENTO);
-    return `<button class="oc k-${t.k}${rk ? ' com-selo' : ''}" data-id="${esc(r.ID)}">
+    return `<button class="oc k-${t.k}${rk ? ' com-selo' : ''}${fx ? ' fixo' : ''}" data-id="${esc(r.ID)}">
       <div class="h"><span class="sis" title="${esc(r.SISTEMA)}">${esc(r.SISTEMA)}</span>
+        <span class="pin${fx ? ' on' : ''}" role="button" tabindex="0" data-pin="${esc(r.ID)}" aria-pressed="${fx}" aria-label="${fx ? 'Desafixar' : 'Fixar no topo'}" title="${fx ? 'Desafixar' : 'Fixar no topo'}">${PIN_SVG}</span>
         <span class="cap-id num" title="ID da solicitação no sistêmico">ID ${esc(r.ID)}</span></div>
       ${r.IMPACTO_OPERACIONAL ? `<div class="imp">${esc(r.IMPACTO_OPERACIONAL)}</div>` : ''}
       <div class="tl"><span class="cap-t k-${t.k}">${esc(t.longo)}</span>${seg ? `<span class="para">para <b>${esc(seg)}</b></span>` : ''}</div>
-      <div class="ft"><div class="timer num"><small>aberto há</small><span data-since="${r._ini.getTime()}">${fDur(now - r._ini)}</span></div>
-        <div class="when">${r.EVOLUCAO ? `<span class="evo">${esc(r.EVOLUCAO)}</span>` : ''}<span class="ini num">início ${ini} ${fHM(r._ini)}</span></div></div>
+      <div class="ft"><div class="timer num"><small>aberto há</small><span class="tm" role="button" tabindex="0" data-crono="${esc(r.ID)}" aria-label="Tempo decorrido: abrir o cronômetro" title="Tempo decorrido"><span class="crn">${CRONO_SVG}</span><span data-since="${r._ini.getTime()}">${fDur(now - r._ini)}</span></span></div>
+        <div class="when">${r.ESTAGIO ? `<span class="evo tem-est" role="button" tabindex="0" data-est="${esc(r.ID)}" aria-label="${esc(r.EVOLUCAO || 'Estágio')}: ver o estágio" title="Ver o estágio">${INFO_SVG}<span>${esc(r.EVOLUCAO || 'Estágio')}</span></span>` : r.EVOLUCAO ? `<span class="evo">${esc(r.EVOLUCAO)}</span>` : ''}<span class="ini num">início ${ini} ${fHM(r._ini)}</span></div></div>
       ${barraDia(r, now)}
-      ${rk ? `<span class="selo">${rk === 'novo' ? 'NOVO' : 'MUDOU'}</span>` : ''}
+      ${rk ? `<span class="selo" role="button" tabindex="0" data-log="${esc(r.ID)}" aria-label="${rk === 'novo' ? 'Novo' : 'Alterações'}: ver a última mudança" title="Ver a última mudança">${rk === 'novo' ? 'NOVO' : 'ALTERAÇÕES'}</span>` : ''}
+      ${al ? `<span class="alrt" role="button" tabindex="0" data-alerta="${esc(r.ID)}" aria-label="Alerta enviado" title="Alerta enviado">${SIRENE_SVG}</span>` : ''}
     </button>`;
   }).join('');
 }
+// alfinete (fixar card) e sirene (alerta enviado): traço fino, no estilo das letras
+const PIN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path class="pc" d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>';
+const SIRENE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 18v-5a5 5 0 0 1 10 0v5"/><path d="M5 21a1 1 0 0 1-1-1v-1a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v1a1 1 0 0 1-1 1z"/><path d="M12 2v1.5M3.5 6.5l1.2 1M20.5 6.5l-1.2 1"/><path d="M10 13a2 2 0 0 1 2-2"/></svg>';
+// fixar/desafixar: quem é fixado vai para o topo (o último fixado fica em cima); desafixado volta à ordem normal
+function alternarPin(id) {
+  const i = S.pins.indexOf(id);
+  if (i >= 0) S.pins.splice(i, 1); else S.pins.unshift(id);
+  if (S.rows.length) S.pins = S.pins.filter(x => S.rows.some(r => r.ID === x));   // tira IDs que saíram do arquivo
+  guardarCofre();
+  renderOpen();
+  if (i < 0) { const c = document.querySelector(`#open .oc[data-id="${CSS.escape(id)}"]`); if (c) { c.classList.add('subiu'); setTimeout(() => c.classList.remove('subiu'), 700); } }
+}
+// janela informativa do alerta enviado
+const AL = { aberto: false, hist: false, ignorarPop: false };
+// janela informativa (mesma caixa para o alerta enviado e para as últimas mudanças do card)
+function abrirInfo(titulo, corpo, icone, acoes, faixa) {
+  clearInterval(AL.tick);
+  let bg = $('alBg');
+  if (!bg) {
+    bg = document.createElement('div'); bg.id = 'alBg'; bg.className = 'nt-bg'; bg.hidden = true;
+    bg.innerHTML = '<div class="nt t-INFORMACAO" id="alBox" role="dialog" aria-modal="true" aria-labelledby="alTit" tabindex="-1"></div>';
+    bg.addEventListener('click', e => { if (e.target === bg) fecharAlerta(); });
+    document.body.appendChild(bg);
+  }
+  const ic = icone != null ? icone : (window.PSNotif && PSNotif.icone ? PSNotif.icone('INFORMACAO') : '');
+  $('alBox').className = 'nt ' + (faixa || (icone != null ? 't-INTERROGACAO' : 't-INFORMACAO'));   // compartilhar: faixa roxa do app; avisos: verde de informação
+  $('alBox').innerHTML = `<div class="nt-h">${ic ? `<span class="nt-ic">${ic}</span>` : ''}<h3 id="alTit">${titulo}</h3></div>
+    <div class="nt-corpo">${corpo}</div>
+    <div class="nt-acoes">${acoes || ''}<button class="nt-bt" id="alX" aria-label="Fechar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg><span>Fechar</span></button></div>`;
+  $('alX').onclick = () => fecharAlerta();
+  bg.hidden = false; document.body.classList.add('al-on'); document.documentElement.classList.add('trava');
+  if (!AL.aberto) { try { history.pushState({ alerta: 1 }, ''); AL.hist = true; } catch (e) { AL.hist = false; } }
+  AL.aberto = true;
+  $('alBox').scrollTop = 0;
+  $('alBox').focus({ preventScroll: true });
+}
+function abrirAlerta(id) {
+  const r = S.rows.find(x => x.ID === id); if (!r) return;
+  abrirInfo('Alerta enviado', `<p class="al-sis"><span class="idc num">${esc(r.ID)}</span> <b>${esc(r.SISTEMA)}</b></p>
+      <p>Foi enviado um <b>alerta</b> para <b>reforçar a solicitação com a área responsável</b>${r.AREA_ACIONADA && r.AREA_ACIONADA !== 'undefined' ? ` (<b>${esc(r.AREA_ACIONADA)}</b>)` : ''}.</p>
+      <p>O chamado continua em acompanhamento até ser normalizado.</p>`, `<span class="ic-verm">${SIRENE_SVG}</span>`, '', 't-CRITICO');
+}
+// cronômetro: tempo decorrido correndo a cada segundo, em horas acumuladas (ex.: 74:12:05), + análise do histórico
+const CRONO_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2h4"/><path d="m12 14 3-3"/><circle cx="12" cy="14" r="8"/></svg>';
+function relogio(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = s % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+}
+function abrirCrono(id) {
+  const r = S.rows.find(x => x.ID === id); if (!r) return;
+  const now = Date.now(), ini = r._ini.getTime(), open = isOpen(r);
+  const fim = () => open ? Date.now() : endOf(r, Date.now());
+  abrirInfo('Tempo decorrido', `<p class="al-sis"><span class="idc num">${esc(r.ID)}</span> <b>${esc(r.SISTEMA)}</b></p>
+      <div class="crono"><div class="cr-n num" id="crN" aria-live="off">${relogio(fim() - ini)}</div>
+        <div class="cr-u"><span>horas</span><span>min</span><span>seg</span></div>
+        <div class="cr-d">${open ? 'aberto' : 'durou'} desde ${fFull(r._ini)} · ${fDur(fim() - ini)}</div></div>
+      ${analiseHtml(r, now, true)}
+      ${ultimasOcorr(r, now)}`, icoRoxo(CRONO_SVG));
+  if (open) AL.tick = setInterval(() => { const e = $('crN'); if (!e || !AL.aberto) { clearInterval(AL.tick); return; } e.textContent = relogio(Date.now() - ini); }, 1000);
+}
+// últimas 3 ocorrências do mesmo problema (mesmo sistema e tipo de falha), sem repetir nome/tipo: só os números
+function ultimasOcorr(r, now) {
+  const k = tipo(r).k, sis = up(r.SISTEMA);
+  const ant = S.rows.filter(x => x.ID !== r.ID && up(x.SISTEMA) === sis && tipo(x).k === k && !isInd(x) && x._ini <= r._ini).sort((a, b) => b._ini - a._ini).slice(0, 3);
+  const exp = x => window.PSPainel ? PSPainel.msExpediente({ ini: x._ini, fimCalc: new Date(endOf(x, now)) }) : null;
+  return `<h5 class="uo-t">Últimas ocorrências</h5>` + (ant.length
+    ? `<table class="uo"><thead><tr><th>Data e hora</th><th>Tempo decorrido</th><th>Impacto no CO</th></tr></thead><tbody>${ant.map(x => { const e = exp(x);
+        return `<tr><td class="num">${fDM(x._ini)}/${String(x._ini.getFullYear()).slice(2)} ${fHM(x._ini)}</td><td class="num">${fDur(endOf(x, now) - x._ini)}${isOpen(x) ? ' <small>em andamento</small>' : ''}</td><td class="num">${e == null ? '—' : e ? fDur(e) : 'fora do expediente'}</td></tr>`; }).join('')}</tbody></table>
+      <p class="uo-obs">Impacto no CO = tempo dentro do expediente (08h–21h).</p>`
+    : `<p class="uo-vazio">Não há ocorrências anteriores deste problema na base.</p>`);
+}
+// estágio: texto livre do operador para o campo; só vale enquanto o chamado está aberto
+const INFO_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-5M12 8h.01"/></svg>';
+const resumoEst = t => String(t || '').replace(/\s+/g, ' ').trim() || '—';
+function abrirEstagio(id) {
+  const r = S.rows.find(x => x.ID === id); if (!r || !r.ESTAGIO) return;
+  const c = S.log.find(x => x.id === id && ((x.kind === 'muda' && x.ch.some(y => y.f === 'ESTAGIO')) || x.kind === 'novo'));
+  const quando = c ? new Date(c.at) : r._upd;
+  const qTxt = quando ? `${fDM(quando)}/${String(quando.getFullYear()).slice(2)} ${fHM(quando)}` : '';
+  abrirInfo('Estágio', `<p class="al-sis"><span class="idc num">${esc(r.ID)}</span> <b>${esc(r.SISTEMA)}</b></p>
+      <div class="est-st"><b>${esc(r.EVOLUCAO || cap(r.STATUS))}</b></div>
+      <div class="est-tx">${esc(r.ESTAGIO)}</div>
+      <div class="est-qd num">${qTxt}</div>`, `<span class="ic-roxo ic-info">${INFO_SVG}</span>`);
+}
+// selo NOVO / ALTERAÇÕES: mostra só a mudança mais recente desse chamado (a que o selo está anunciando)
+function abrirLog(id) {
+  const r = S.rows.find(x => x.ID === id); if (!r) return;
+  const now = Date.now(), ult = S.log.find(c => c.id === id && (c.kind === 'novo' || c.kind === 'muda')) || S.log.find(c => c.id === id);
+  abrirInfo(ult && ult.kind === 'novo' ? 'Novo chamado' : 'Última mudança', `<p class="al-sis"><span class="idc num">${esc(r.ID)}</span> <b>${esc(r.SISTEMA)}</b></p>` +
+    (ult ? `<div class="feed log-jan">${feedItem(ult, now).replace(/data-id="[^"]*"/, 'disabled')}</div>` : '<p>Nenhuma mudança registrada neste aparelho.</p>'));
+}
+function fecharAlerta(porHistorico) {
+  if (!AL.aberto) return;
+  AL.aberto = false; clearInterval(AL.tick); $('alBg').hidden = true; document.body.classList.remove('al-on');
+  if (!document.body.matches('.nt-on, .sheet-on')) document.documentElement.classList.remove('trava');
+  if (!porHistorico && AL.hist) { AL.ignorarPop = true; history.back(); }
+  AL.hist = false;
+}
+
 // segmentos afetados: "B2B, B2C, CAMPO" → "B2B, B2C e CAMPO"
 function segTxt(s) {
   const l = String(s || '').split(',').map(x => x.trim()).filter(Boolean);
@@ -525,16 +689,25 @@ function feedItem(c, now) {
   const d = new Date(c.at);
   const hr = `<div class="hr num">${fHM(d)}${sameDay(d, new Date(now)) ? '' : `<small>${fDM(d)}</small>`}</div>`;
   let tx;
-  const nome = `<span class="fn">${idCap(c.id)}<b>${esc(c.sis)}</b></span>`;
-  if (c.kind === 'novo') tx = `${nome} · novo chamado<div class="tr">${statusTag(c.st)}${c.evo ? ' ' + esc(c.evo) : ''}</div>`;
-  else if (c.kind === 'muda') tx = `${nome}${c.inc ? ' · ' + esc(c.inc) : ''}` + c.ch.map(x => {
-    if (x.f === 'STATUS') return `<div class="tr">${statusTag(x.de)} → ${statusTag(x.para)}</div>`;
-    if (x.f === 'DATA_FIM') { const f = parseDate(x.para); return `<div class="tr">${f ? 'normalizado às ' + fHM(f) + (sameDay(f, new Date(now)) ? '' : ' de ' + fDM(f)) : 'fim retirado'}</div>`; }
-    return `<div class="tr">${esc(x.label)}: ${esc(x.de || '—')} → <b>${esc(x.para || '—')}</b></div>`;
-  }).join('');
-  else if (c.kind === 'dados') tx = `${nome}${c.inc ? ' · ' + esc(c.inc) : ''}<div class="tr">dados do chamado atualizados</div>`;
-  else if (c.kind === 'saiu') tx = `${nome}${c.inc ? ' · ' + esc(c.inc) : ''}<div class="tr">saiu do arquivo</div>`;
-  else tx = `<b>${c.n} chamados saíram do arquivo</b><div class="tr">IDs ${esc(c.ids.slice(0, 12).join(', '))}${c.ids.length > 12 ? '…' : ''}</div>`;
+  const nome = `<span class="fn">${idCap(c.id)}<span class="fs">${esc(c.sis)}</span></span>`;
+  // cada campo que mudou vira uma linha "• Campo: valor que entrou" (sem o valor anterior)
+  const li = (rot, val, cls) => `<li${cls ? ` class="${cls}"` : ''}><b>${esc(rot)}${val != null ? ':' : ''}</b>${val != null ? ' ' + esc(val) : ''}</li>`;
+  const valor = x => {
+    if (!x.para) return x.f === 'DATA_FIM' ? 'retirado' : '—';
+    if (x.f === 'DATA_FIM' || x.f === 'DATA_INICIO') { const f = parseDate(x.para); return f ? fDM(f) + ' ' + fHM(f) : x.para; }
+    if (x.f === 'TIPO_FALHA') return tipo({ TIPO_FALHA: x.para }).longo;
+    if (x.f === 'CRITICIDADE') return x.para;
+    if (x.f === 'ALERTA_ENVIADO') return x.para === '1' ? 'Sim' : x.para === '0' ? 'Não' : x.para;
+    if (x.f === 'STATUS' || x.f === 'EVOLUCAO') return cap(x.para);
+    return x.para;   // demais campos: como vieram no arquivo
+  };
+  let itens;
+  if (c.kind === 'novo') itens = li('Novo chamado') + li('Status', cap(c.st)) + (c.evo ? li('Evolução', cap(c.evo)) : '');
+  else if (c.kind === 'muda') itens = c.ch.map(x => x.f === 'ESTAGIO' ? li('Estágio', resumoEst(x.para), 'est') : li(x.label, valor(x))).join('');
+  else if (c.kind === 'dados') itens = li('Dados do chamado atualizados');
+  else if (c.kind === 'saiu') itens = li('Saiu do arquivo');
+  if (c.kind === 'saiu-varios') tx = `<span class="fs">${c.n} chamados saíram do arquivo</span><ul class="lg">${li('IDs', c.ids.slice(0, 12).join(', ') + (c.ids.length > 12 ? '…' : ''))}</ul>`;
+  else tx = `${nome}<ul class="lg">${itens}</ul>`;
   const clickable = c.id && S.rows.some(r => r.ID === c.id);
   return `<button class="fi" ${clickable ? `data-id="${esc(c.id)}"` : 'disabled'}>${hr}<div class="tx">${tx}</div></button>`;
 }
@@ -590,7 +763,7 @@ function fecharSis() {
   const b = $('pickB'); if (b) b.setAttribute('aria-expanded', 'false');
 }
 function setSis(n) {
-  S.fSis = n; S.histDays = HIST_STEP;
+  S.fSis = n; S.histCorte = null;
   fecharSis(); renderSisSelect(); renderHist();
 }
 function renderHist() {
@@ -612,14 +785,21 @@ function renderHist() {
     groups[groups.length - 1].rows.push(r);
   }
   if (!groups.length) { $('hist').innerHTML = `<div class="day"><div class="empty">${q || S.filter !== 'todos' || S.fSis ? 'Nada encontrado com esse filtro.' : 'Sem chamados no arquivo.'}</div></div>`; return; }
-  const shown = groups.slice(0, S.histDays);
+  // corte = 1º dia do mês mais antigo exibido (padrão: mês anterior ao atual).
+  // Se o filtro não tiver nada nesses meses, começa pelo mês mais recente que tiver chamado.
+  const mesDe = d => new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+  let corte = S.histCorte != null ? S.histCorte : new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
+  corte = Math.min(corte, mesDe(groups[0].d));
+  const shown = groups.filter(g => g.d.getTime() >= corte);
+  const prox = groups[shown.length];   // 1º dia ainda escondido: o mês dele é o próximo a mostrar
+  const rotMes = d => MESES_LONGO[d.getMonth()] + (d.getFullYear() !== now.getFullYear() ? ' de ' + d.getFullYear() : '');
   $('hist').innerHTML = shown.map(g => {
     const v = g.rows.filter(r => !isInd(r));
     const d0 = new Date(g.d); d0.setHours(0, 0, 0, 0);
     const dms = unionMs(v.map(r => [r._ini.getTime(), endOf(r, Date.now())]), d0.getTime(), d0.getTime() + 864e5);
     return `<div class="day"><div class="dh"><b>${esc(dayLabel(g.d, now))}</b><span class="num">${g.rows.length} chamado${g.rows.length > 1 ? 's' : ''}${dms ? ' · ' + fDur(dms) : ''}</span></div>` +
       g.rows.map(r => hiRow(r, Date.now(), false)).join('') + `</div>`;
-  }).join('') + (groups.length > S.histDays ? `<button class="more" id="btMore">Mostrar mais ${Math.min(HIST_STEP, groups.length - S.histDays)} dias</button>` : '');
+  }).join('') + (prox ? `<button class="more" id="btMore" data-corte="${mesDe(prox.d)}">Mostrar mês de ${rotMes(prox.d)}</button>` : '');
 }
 
 /* ---- 3) Painel ---- */
@@ -670,6 +850,7 @@ function setTab(t) {
   S.tab = t;
   if (t === 'painel' && window.PSPainel && PSPainel.recolher) PSPainel.recolher();   // matriz de sistemas sempre começa fechada
   Object.entries(TABS).forEach(([k, id]) => { $(id).hidden = k !== t; });
+  $('btShare').hidden = t !== 'oc';
   document.querySelectorAll('#tabs button').forEach(b => { const on = b.dataset.v === t; b.classList.toggle('on', on); b.setAttribute('aria-current', on ? 'page' : 'false'); });
   renderTab();
   window.scrollTo(0, 0);
@@ -744,6 +925,7 @@ function drawDet(id, list) {
   const hist = S.log.filter(c => c.id === id);
   const msExp = window.PSPainel ? PSPainel.msExpediente({ ini: r._ini, fimCalc: new Date(endOf(r, now)) }) : null;
   $('sheet').innerHTML = `<button class="fechar" id="shX" aria-label="Fechar" title="Fechar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+    <button class="shr" id="shShare" aria-label="Compartilhar as informações do chamado" title="Compartilhar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg></button>
     ${list ? '<button class="volta" id="shVolta">‹ Voltar à lista</button>' : ''}
     <h3 id="shTitle" class="dt-h"><span class="nm">${esc(r.SISTEMA)}</span><span class="cap-id num" title="ID da solicitação no sistêmico">ID ${esc(r.ID)}</span><span class="stl"><span class="cap-t k-${t.k}">${esc(t.longo)}</span>${statusTag(r.STATUS)}</span></h3>
     <div class="big">
@@ -763,16 +945,198 @@ function drawDet(id, list) {
       ${row('Evolução', esc(r.EVOLUCAO))}
       ${row('Impacto', esc(r.IMPACTO_OPERACIONAL))}
       ${'ALERTA_ENVIADO' in r ? row('Alerta enviado', yn(r.ALERTA_ENVIADO)) : ''}
+      ${open && r.ESTAGIO ? `<dt>Estágio</dt><dd class="est">${esc(r.ESTAGIO)}</dd>` : ''}
     </dl>
     ${extra.length ? `<h4>Outras colunas</h4><dl class="kv">${extra.map(c => row(esc(c), esc(r[c]) || '—')).join('')}</dl>` : ''}
     <h4>Mudanças registradas</h4>
     ${hist.length ? `<div class="feed">${hist.map(c => feedItem(c, now).replace(/data-id="[^"]*"/, 'disabled')).join('')}</div>` : '<div class="empty" style="padding:0">Nenhuma mudança registrada neste aparelho.</div>'}
     ${analiseHtml(r, now)}`;
   $('shX').onclick = () => history.back();
+  $('shShare').onclick = () => compartilhar(r);
   if ($('shCham')) $('shCham').onclick = () => copiarChamado($('shCham').dataset.cham);
   if (list) $('shVolta').onclick = () => { S.sheet = { mode: 'list', id: null, list }; refreshSheet(); };
   return true;
 }
+/* ---------- compartilhar (WhatsApp, Teams, Outlook...) ----------
+   Título em *negrito* (WhatsApp); depois tipo de falha · status · ID e a lista do chamado até "Alerta enviado".
+   Mudanças registradas e análise do histórico não entram. */
+function textoCompartilhar(r, now = Date.now()) {
+  const t = tipo(r), open = isOpen(r);
+  const msExp = window.PSPainel ? PSPainel.msExpediente({ ini: r._ini, fimCalc: new Date(endOf(r, now)) }) : null;
+  const yn = v => (v === '1' ? 'Sim' : v === '0' ? 'Não' : (v || '—'));
+  const lin = [];
+  const add = (k, v) => { if (v != null && String(v).trim() !== '') lin.push(`${k}: ${v}`); };
+  add('Chamado', temChamado(r.CHAMADO) ? r.CHAMADO : 'Sem chamado');
+  add('Início', fFull(r._ini));
+  add('Fim', r._fim ? fFull(r._fim) : (open ? 'em andamento' : '—'));
+  add('Duração', fDur(endOf(r, now) - r._ini));
+  if (msExp != null) add('No expediente (08h–21h)', msExp ? fDur(msExp) : 'fora do expediente');
+  add('Segmento', r.SEGMENTO);
+  add('Área acionada', r.AREA_ACIONADA);
+  add('Grupos responsáveis', r.GRUPOS_RESPONSAVEIS);
+  add('Grupos impactados', r.GRUPOS_IMPACTADOS);
+  add('Evolução', r.EVOLUCAO);
+  add('Impacto', r.IMPACTO_OPERACIONAL);
+  if ('ALERTA_ENVIADO' in r) add('Alerta enviado', yn(r.ALERTA_ENVIADO));
+  return `*${r.SISTEMA}*\n${t.longo} · ${cap(r.STATUS)} · ID ${r.ID}\n\n${lin.join('\n')}`;
+}
+async function compartilhar(r) {
+  const texto = textoCompartilhar(r);
+  if (navigator.share) {
+    try { await navigator.share({ title: `${r.SISTEMA} · ID ${r.ID}`, text: texto }); return; }
+    catch (e) { if (e && e.name === 'AbortError') return; }   // a pessoa cancelou: nada a fazer
+  }
+  let ok = false;
+  try { await navigator.clipboard.writeText(texto); ok = true; } catch (e) {
+    try { const ta = document.createElement('textarea'); ta.value = texto; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); ok = document.execCommand('copy'); ta.remove(); } catch (e2) { ok = false; }
+  }
+  toast(ok ? 'Informações do chamado copiadas. Cole no WhatsApp, Teams ou Outlook.' : 'Não foi possível compartilhar neste aparelho.', false, ok ? 3500 : 5000);
+}
+/* ---------- compartilhar o painel (imagem dos cards) ou o app (QR Code e link) ---------- */
+// endereço do app para compartilhar: o de onde ele está rodando (sem #, ?, nem nome de arquivo), ou o `appUrl` de config.js
+const APP_LINK = (() => {
+  const cfg = window.PS_CONFIG && window.PS_CONFIG.appUrl;
+  if (cfg && /^https:\/\//.test(cfg)) return cfg.replace(/\/?$/, '/');
+  try { return new URL('./', location.href).href; } catch (e) { return location.href.split(/[?#]/)[0]; }
+})();
+const ICO = {
+  share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>',
+  painel: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-4.5-4.5L6 21"/></svg>',
+  app: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3"/></svg>',
+  copiar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  baixar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>',
+  conversa: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>',
+  equipe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17.5" cy="9" r="2.5"/><path d="M16 14.2a5 5 0 0 1 6 4.8"/></svg>',
+  email: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="m3 6 9 7 9-7"/></svg>',
+  voltar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg>'
+};
+const icoRoxo = svg => `<span class="ic-roxo">${svg}</span>`;
+function menuCompartilhar() {
+  abrirInfo('Compartilhar', `<div class="cp-op">
+      <button class="cp-it" id="cpPainel"><span class="ci">${ICO.painel}</span><span><b>Compartilhar painel</b><small>Imagem das ocorrências ativas + link do app</small></span></button>
+      <button class="cp-it" id="cpApp"><span class="ci">${ICO.app}</span><span><b>Compartilhar app</b><small>QR Code e link para abrir o app</small></span></button>
+    </div>`, icoRoxo(ICO.share));
+  $('cpPainel').onclick = () => compartilharPainel();
+  $('cpApp').onclick = () => compartilharApp();
+}
+const BT_VOLTAR = `<button class="nt-bt" id="cpVolta" aria-label="Voltar">${ICO.voltar}<span>Voltar</span></button>`;
+function ligarVoltar() { const v = $('cpVolta'); if (v) v.onclick = () => menuCompartilhar(); }
+async function copiarTexto(t) {
+  try { await navigator.clipboard.writeText(t); return true; } catch (e) {
+    try { const ta = document.createElement('textarea'); ta.value = t; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); const ok = document.execCommand('copy'); ta.remove(); return ok; } catch (e2) { return false; }
+  }
+}
+// ---- app: QR Code, link, copiar e redes
+function compartilharApp() {
+  const msg = 'Problemas Sistêmicos: acompanhe em tempo real os problemas sistêmicos e o andamento dos chamados.';
+  const tx = encodeURIComponent(msg + '\n' + APP_LINK);
+  abrirInfo('Compartilhar app', `<div class="cp-app">
+      <img class="qr" src="icons/qrcode.svg" width="176" height="176" alt="QR Code do app Problemas Sistêmicos">
+      <div class="lk"><span class="num" id="cpLink">${APP_LINK}</span></div>
+      <button class="cp-copiar" id="cpCopiar">${ICO.copiar}<span>Copiar link</span></button>
+      <div class="cp-redes">
+        <a class="cp-rede" id="cpWa" href="https://wa.me/?text=${tx}" target="_blank" rel="noopener">${ICO.conversa}<span>WhatsApp</span></a>
+        <a class="cp-rede" id="cpTeams" href="https://teams.microsoft.com/share?href=${encodeURIComponent(APP_LINK)}&msgText=${encodeURIComponent(msg)}" target="_blank" rel="noopener">${ICO.equipe}<span>Teams</span></a>
+        <a class="cp-rede" id="cpMail" href="mailto:?subject=${encodeURIComponent('App Problemas Sistêmicos')}&body=${tx}">${ICO.email}<span>Outlook</span></a>
+      </div>
+      ${navigator.share ? `<button class="cp-mais" id="cpMais">${ICO.share}<span>Outras opções</span></button>` : ''}
+    </div>`, icoRoxo(ICO.app), BT_VOLTAR);
+  ligarVoltar();
+  $('cpCopiar').onclick = async () => { const ok = await copiarTexto(APP_LINK); toast(ok ? 'Link do app copiado.' : 'Não foi possível copiar. Link: ' + APP_LINK, false, ok ? 2500 : 6000); };
+  if ($('cpMais')) $('cpMais').onclick = async () => { try { await navigator.share({ title: 'Problemas Sistêmicos', text: msg, url: APP_LINK }); } catch (e) { /* cancelado */ } };
+}
+// ---- painel: imagem dos cards (desenhada no canvas, igual em qualquer aparelho) + link
+function quebraLinhas(ctx, texto, larg, max) {
+  const pal = String(texto || '').split(/\s+/).filter(Boolean), out = []; let lin = '';
+  for (const p of pal) { const t = lin ? lin + ' ' + p : p; if (ctx.measureText(t).width <= larg || !lin) lin = t; else { out.push(lin); lin = p; } }
+  if (lin) out.push(lin);
+  if (max && out.length > max) { out.length = max; let u = out[max - 1]; while (u && ctx.measureText(u + '…').width > larg) u = u.slice(0, -1); out[max - 1] = u.trimEnd() + '…'; }
+  return out;
+}
+function corta(ctx, t, larg) { if (ctx.measureText(t).width <= larg) return t; while (t && ctx.measureText(t + '…').width > larg) t = t.slice(0, -1); return t + '…'; }
+function pilula(ctx, x, y, w, h, fundo, borda) { ctx.beginPath(); ctx.roundRect(x, y, w, h, h / 2); if (fundo) { ctx.fillStyle = fundo; ctx.fill(); } if (borda) { ctx.strokeStyle = borda; ctx.lineWidth = 1.5; ctx.stroke(); } }
+const COR_TIPO = { total: '#D61F4F', parcial: '#F2603E', interm: '#FF9901', lent: '#FFC629', outro: '#7d7190' };
+function desenharPainel(now = Date.now()) {
+  const W = 540, P = 16, CW = W - 2 * P, ESC = 2, FONTE = 'system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif';
+  const f = (peso, tam) => `${peso} ${tam}px ${FONTE}`;
+  const ativos = ordemAtivas(), d = new Date(now);
+  const cv = document.createElement('canvas'), ctx = cv.getContext('2d');
+  // 1ª passada: mede a altura de cada card
+  const cards = ativos.map(r => {
+    const t = tipo(r), seg = segTxt(r.SEGMENTO);
+    ctx.font = f(400, 14); const imp = r.IMPACTO_OPERACIONAL ? quebraLinhas(ctx, r.IMPACTO_OPERACIONAL, CW - 32, 2) : [];
+    ctx.font = f(700, 12); const capW = ctx.measureText(t.longo).width + 22;
+    ctx.font = f(400, 13); const paraW = seg ? ctx.measureText('para ' + seg).width : 0;
+    const tipoLinhas = seg && capW + 8 + paraW > CW - 32 ? 2 : 1;
+    const h = 16 + 24 + imp.length * 19 + 8 + tipoLinhas * 24 + 10 + 44 + 14;
+    return { r, t, seg, imp, capW, tipoLinhas, h };
+  });
+  const TOPO = 86, RODAPE = 54, VAZIO = 96;
+  const H = TOPO + (cards.length ? cards.reduce((s, c) => s + c.h + 14, 0) : VAZIO + 14) + RODAPE;
+  cv.width = W * ESC; cv.height = H * ESC; ctx.scale(ESC, ESC);
+  ctx.fillStyle = '#F1ECF6'; ctx.fillRect(0, 0, W, H);
+  const g = ctx.createLinearGradient(0, 0, W, 72); g.addColorStop(0, '#52227a'); g.addColorStop(.6, '#642A90'); g.addColorStop(1, '#8549b5');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, 72);
+  ctx.fillStyle = '#fff'; ctx.font = f(800, 21); ctx.textBaseline = 'alphabetic'; ctx.fillText('Problemas Sistêmicos', P, 32);
+  ctx.font = f(500, 13); ctx.globalAlpha = .9;
+  ctx.fillText(`Ocorrências ativas: ${ativos.length} · ${fDM(d)}/${d.getFullYear()} às ${fHM(d)}`, P, 54); ctx.globalAlpha = 1;
+  let y = TOPO;
+  const sombra = () => { ctx.shadowColor = 'rgba(58,22,88,.10)'; ctx.shadowBlur = 16; ctx.shadowOffsetY = 4; }, semSombra = () => { ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0; };
+  if (!cards.length) {
+    sombra(); ctx.fillStyle = '#EEF7DC'; ctx.beginPath(); ctx.roundRect(P, y, CW, VAZIO, 20); ctx.fill(); semSombra();
+    ctx.fillStyle = '#5F8A12'; ctx.font = f(800, 17); ctx.fillText('Nenhuma ocorrência ativa', P + 20, y + 42);
+    ctx.font = f(400, 13); ctx.fillText('Todos os sistemas operando.', P + 20, y + 64);
+    y += VAZIO + 14;
+  }
+  for (const c of cards) {
+    const { r, t } = c, x = P + 16, lw = CW - 32;
+    sombra(); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.roundRect(P, y, CW, c.h, 20); ctx.fill(); semSombra();
+    let yy = y + 16;
+    // ID à direita (cápsula com borda), nome do sistema à esquerda
+    ctx.font = f(700, 12); const idT = 'ID ' + r.ID, idW = ctx.measureText(idT).width + 20;
+    pilula(ctx, x + lw - idW, yy, idW, 22, null, '#1f1530'); ctx.fillStyle = '#1f1530'; ctx.fillText(idT, x + lw - idW + 10, yy + 15.5);
+    ctx.font = f(800, 18); ctx.fillText(corta(ctx, r.SISTEMA, lw - idW - 12), x, yy + 17);
+    yy += 24;
+    ctx.font = f(400, 14); ctx.fillStyle = '#1f1530'; c.imp.forEach(l => { ctx.fillText(l, x, yy + 15); yy += 19; });
+    yy += 8;
+    pilula(ctx, x, yy, c.capW, 22, COR_TIPO[t.k] || COR_TIPO.outro); ctx.font = f(700, 12);
+    ctx.fillStyle = t.k === 'interm' || t.k === 'lent' ? '#2b1a00' : '#fff'; ctx.fillText(t.longo, x + 11, yy + 15.5);
+    if (c.seg) { ctx.fillStyle = '#1f1530'; ctx.font = f(400, 13); const px = c.tipoLinhas === 2 ? x : x + c.capW + 8, py = c.tipoLinhas === 2 ? yy + 24 : yy; ctx.fillText('para ' + c.seg, px, py + 15.5); }
+    yy += c.tipoLinhas * 24 + 10;
+    ctx.fillStyle = '#5b5068'; ctx.font = f(600, 11); ctx.fillText('aberto há', x, yy + 10);
+    ctx.fillStyle = '#1f1530'; ctx.font = f(800, 19); ctx.fillText(fDur(now - r._ini), x, yy + 33);
+    const ini = (sameDay(r._ini, d) ? 'hoje' : fDM(r._ini)) + ' ' + fHM(r._ini);
+    ctx.font = f(400, 12); ctx.fillStyle = '#5b5068'; const iniT = 'início ' + ini; ctx.fillText(iniT, x + lw - ctx.measureText(iniT).width, yy + 36);
+    if (r.EVOLUCAO) { ctx.font = f(700, 11.5); const ev = corta(ctx, r.EVOLUCAO, lw * .6), ew = ctx.measureText(ev).width + 18; pilula(ctx, x + lw - ew, yy, ew, 20, '#EEE6F5'); ctx.fillStyle = '#1f1530'; ctx.fillText(ev, x + lw - ew + 9, yy + 14); }
+    if (r.ALERTA_ENVIADO === '1') {   // sirene na quina superior direita, como no card
+      const cx = P + CW - 3, cy = y + 1; ctx.beginPath(); ctx.arc(cx, cy, 12, 0, Math.PI * 2); ctx.fillStyle = '#D61F4F'; ctx.fill(); ctx.lineWidth = 2.5; ctx.strokeStyle = '#fff'; ctx.stroke();
+      ctx.save(); ctx.translate(cx - 7.5, cy - 7.5); ctx.scale(15 / 24, 15 / 24); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ['M7 18v-5a5 5 0 0 1 10 0v5', 'M5 21a1 1 0 0 1-1-1v-1a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v1a1 1 0 0 1-1 1z', 'M12 2v1.5M3.5 6.5l1.2 1M20.5 6.5l-1.2 1'].forEach(p => ctx.stroke(new Path2D(p))); ctx.restore();
+    }
+    y += c.h + 14;
+  }
+  ctx.fillStyle = '#5b5068'; ctx.font = f(600, 12); const rod = 'Acompanhe no app: ' + APP_LINK.replace(/^https:\/\//, '').replace(/\/$/, '');
+  ctx.fillText(rod, (W - ctx.measureText(rod).width) / 2, H - 22);
+  return cv;
+}
+function dataUrlParaBlob(u) { const [cab, b64] = u.split(','), bin = atob(b64), arr = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i); return new Blob([arr], { type: cab.slice(5, cab.indexOf(';')) }); }
+function compartilharPainel() {
+  const now = Date.now(), d = new Date(now), url = desenharPainel(now).toDataURL('image/png');
+  const nome = `problemas-sistemicos_${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}_${fHM(d).replace(':', '')}.png`;
+  const n = openRows().length;
+  const texto = `Problemas Sistêmicos: ${n ? n + ' ocorrência' + (n > 1 ? 's' : '') + ' ativa' + (n > 1 ? 's' : '') : 'nenhuma ocorrência ativa'} em ${fDM(d)} às ${fHM(d)}.\n${APP_LINK}`;
+  let arq = null; try { arq = new File([dataUrlParaBlob(url)], nome, { type: 'image/png' }); } catch (e) { arq = null; }
+  const podeArq = !!(arq && navigator.canShare && navigator.canShare({ files: [arq] }));
+  abrirInfo('Compartilhar painel', `<div class="cp-pre"><img id="cpImg" src="${url}" alt="Imagem das ocorrências ativas"></div>
+      <p class="cp-obs">${podeArq ? 'A imagem vai junto com o link do app.' : 'Este aparelho não envia imagem direto: baixe a imagem e copie o link para colar junto.'}</p>
+      <div class="cp-acts">${podeArq ? `<button class="cp-copiar" id="cpEnviar">${ICO.share}<span>Compartilhar</span></button>` : ''}
+        <a class="cp-copiar sec" id="cpBaixar" href="${url}" download="${nome}">${ICO.baixar}<span>Baixar imagem</span></a>
+        <button class="cp-copiar sec" id="cpCopLink">${ICO.copiar}<span>Copiar link</span></button></div>`, icoRoxo(ICO.painel), BT_VOLTAR);
+  ligarVoltar();
+  if ($('cpEnviar')) $('cpEnviar').onclick = async () => { try { await navigator.share({ files: [arq], title: 'Problemas Sistêmicos', text: texto }); } catch (e) { /* cancelado */ } };
+  $('cpCopLink').onclick = async () => { const ok = await copiarTexto(APP_LINK); toast(ok ? 'Link do app copiado.' : 'Não foi possível copiar. Link: ' + APP_LINK, false, ok ? 2500 : 6000); };
+}
+
 /* ---------- análise do histórico (detalhe) ----------
    Amostra: todo o arquivo (6 meses fechados + o mês atual), mesmo SISTEMA e mesmo tipo de falha.
    Tempo = duração total (início → fim) dos chamados encerrados; indevidos ficam fora.
@@ -787,8 +1151,15 @@ function analise(r, now) {
   const media = fech.length ? fech.reduce((a, f) => a + f.ms, 0) / fech.length : null;
   return { n: mesmos.length, nFech: fech.length, media, menor: fech[0] || null, maior: fech[fech.length - 1] || null, base0, dias };
 }
-function freqTxt(a) {
+function freqTxt(a, curto) {
   if (!a.n || !a.base0) return '';
+  if (curto) {   // janela do cronômetro: frase curta
+    const dd = Math.round(a.dias), iv = a.dias / a.n;
+    if (a.n === 1) return `Primeira ocorrência na base (${dd} dias).`;
+    if (iv < 1) return `Média de <b>${(a.n / a.dias).toFixed(1).replace('.', ',')} por dia</b> (${a.n} em ${dd} dias).`;
+    const d = Math.round(iv);
+    return `Média a cada <b>${d} dia${d > 1 ? 's' : ''}</b> (${a.n} em ${dd} dias).`;
+  }
   const intervalo = a.dias / a.n;
   const periodo = `${a.n} ocorrência${a.n > 1 ? 's' : ''} em ${Math.round(a.dias)} dias de base`;
   if (a.n === 1) return `Primeira ocorrência desse problema na base (${Math.round(a.dias)} dias).`;
@@ -796,26 +1167,27 @@ function freqTxt(a) {
   const d = Math.round(intervalo);
   return `Esse problema ocorre em média <b>a cada ${d} dia${d > 1 ? 's' : ''}</b> (${periodo}).`;
 }
-function analiseHtml(r, now) {
+function analiseHtml(r, now, semTitulo) {
   const t = tipo(r), a = analise(r, now);
   const quando = f => `<small class="qd">${fDM(f.x._ini)}/${String(f.x._ini.getFullYear()).slice(2)}</small>`;
   let cmp = '';
   if (isOpen(r) && a.media != null) {
     const aberto = now - r._ini;
-    cmp = `<p class="an-cmp ${aberto > a.media ? 'acima' : ''}">Este chamado está aberto há <b>${fDur(aberto)}</b>: ${aberto > a.maior.ms ? 'já passou do maior tempo da base' : aberto > a.media ? 'acima da média' : 'dentro da média'}.</p>`;
+    const sit = aberto > a.maior.ms ? (semTitulo ? 'ultrapassou o maior tempo da base' : 'já passou do maior tempo da base') : aberto > a.media ? 'acima da média' : 'dentro da média';
+    cmp = `<p class="an-cmp ${aberto > a.media ? 'acima' : ''}">${semTitulo ? `Aberto há <b>${fDur(aberto)}</b>: ${sit}.` : `Este chamado está aberto há <b>${fDur(aberto)}</b>: ${sit}.`}</p>`;
   }
   const corpo = !a.nFech ? `<div class="empty" style="padding:0">Ainda não há chamado encerrado de ${esc(r.SISTEMA)} com ${esc(t.longo.toLowerCase())} na base para calcular os tempos.</div>`
     : `<div class="an-box">
-        <div><small>Tempo médio</small><b class="num">${fDur(a.media)}</b></div>
-        <div><small>Maior tempo</small><b class="num">${fDur(a.maior.ms)}</b>${quando(a.maior)}</div>
-        <div><small>Menor tempo</small><b class="num">${fDur(a.menor.ms)}</b>${quando(a.menor)}</div>
+        <div><small><span class="sl">Tempo </span>médio</small><b class="num">${fDur(a.media)}</b></div>
+        <div><small>Maior<span class="sl"> tempo</span></small><b class="num">${fDur(a.maior.ms)}</b>${quando(a.maior)}</div>
+        <div><small>Menor<span class="sl"> tempo</span></small><b class="num">${fDur(a.menor.ms)}</b>${quando(a.menor)}</div>
       </div>${cmp}`;
-  return `<h4>Análise do histórico</h4>
+  return `${semTitulo ? '' : '<h4>Análise do histórico</h4>'}
     <div class="an">
       <div class="an-t">${esc(r.SISTEMA)} · <span class="tf" style="--fc:${t.c}"><i></i>${esc(t.longo)}</span></div>
       ${corpo}
-      ${a.n ? `<p class="an-fq">${freqTxt(a)}</p>` : ''}
-      <p class="an-base">Base: ${a.nFech} chamado${a.nFech === 1 ? '' : 's'} encerrado${a.nFech === 1 ? '' : 's'} desse sistema com esse tipo de falha${a.base0 ? `, de ${fDM(a.base0)}/${String(a.base0.getFullYear()).slice(2)} até hoje` : ''} · tempo total do início ao fim · indevidos fora.</p>
+      ${a.n ? `<p class="an-fq">${freqTxt(a, semTitulo)}</p>` : ''}
+      ${semTitulo ? '' : `<p class="an-base">Base: ${a.nFech} chamado${a.nFech === 1 ? '' : 's'} encerrado${a.nFech === 1 ? '' : 's'} desse sistema com esse tipo de falha${a.base0 ? `, de ${fDM(a.base0)}/${String(a.base0.getFullYear()).slice(2)} até hoje` : ''} · tempo total do início ao fim · indevidos fora.</p>`}
     </div>`;
 }
 /* ---------- copiar o número do chamado ---------- */
@@ -838,7 +1210,7 @@ function closeSheet() {
   S.sheet = null;
   $('sheet').classList.remove('show'); $('sheet').scrollTop = 0;
   $('sheetBg').style.display = 'none';
-  document.body.classList.remove('sheet-on'); if (!document.body.classList.contains('nt-on')) document.documentElement.classList.remove('trava');
+  document.body.classList.remove('sheet-on'); if (!document.body.matches('.nt-on, .al-on')) document.documentElement.classList.remove('trava');
   if (l && l.onClose) l.onClose();
 }
 
@@ -984,8 +1356,9 @@ function migrarLegado() {
 async function restaurar() {
   let cofre = null;
   try { cofre = await PSCripto.abrirSelo(localStorage.getItem(K.cofre)); } catch (e) { /* sem cofre */ }
-  if (cofre) { S.snap = cofre.snap || null; S.log = Array.isArray(cofre.log) ? cofre.log : []; }
+  if (cofre) { S.snap = cofre.snap || null; S.log = Array.isArray(cofre.log) ? cofre.log : []; S.pins = Array.isArray(cofre.pins) ? cofre.pins : []; }
   migrarLegado();
+  limparRestos();
   const pk = load(K.pkg, null);
   if (pk && pk.text) {
     const p = await aplicarPacote(pk.text, { etag: pk.etag, source: pk.source, loadedAt: pk.loadedAt }, true);
@@ -1012,6 +1385,16 @@ function montar() {
   $('quem').textContent = S.cred ? S.cred.matricula : '';
 
   document.addEventListener('click', e => {
+    const pn = e.target.closest('[data-pin]');
+    if (pn) { e.preventDefault(); alternarPin(pn.dataset.pin); return; }
+    const ale = e.target.closest('[data-alerta]');
+    if (ale) { e.preventDefault(); abrirAlerta(ale.dataset.alerta); return; }
+    const cr = e.target.closest('[data-crono]');
+    if (cr) { e.preventDefault(); abrirCrono(cr.dataset.crono); return; }
+    const es = e.target.closest('[data-est]');
+    if (es) { e.preventDefault(); abrirEstagio(es.dataset.est); return; }
+    const lg = e.target.closest('[data-log]');
+    if (lg) { e.preventDefault(); abrirLog(lg.dataset.log); return; }
     const it = e.target.closest('[data-id]');
     if (it && !it.disabled) {
       if (it.closest('#sheet')) {   // item da lista do Painel: abre o detalhe com "Voltar à lista"
@@ -1021,14 +1404,15 @@ function montar() {
       if (it.closest('#pgOc') || it.closest('#pgHist')) { openSheet(it.dataset.id); return; }
     }
     const ch = e.target.closest('#chips .chip');
-    if (ch) { S.filter = ch.dataset.f; S.histDays = HIST_STEP; renderChips(); renderHist(); return; }
-    if (e.target.id === 'btMore') { S.histDays += HIST_STEP; renderHist(); }
+    if (ch) { S.filter = ch.dataset.f; S.histCorte = null; renderChips(); renderHist(); return; }
+    if (e.target.id === 'btMore') { S.histCorte = +e.target.dataset.corte; renderHist(); }
   });
   document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => setTab(b.dataset.v));
   $('btFeed').onclick = () => { S.feedAll = !S.feedAll; renderFeed(); };
   $('btRefresh').onclick = () => poll(true);
+  $('btShare').onclick = () => menuCompartilhar();
   $('btBell').onclick = toggleBell;
-  let qT; $('q').addEventListener('input', e => { clearTimeout(qT); qT = setTimeout(() => { S.q = e.target.value; S.histDays = HIST_STEP; renderHist(); }, 150); });
+  let qT; $('q').addEventListener('input', e => { clearTimeout(qT); qT = setTimeout(() => { S.q = e.target.value; S.histCorte = null; renderHist(); }, 150); });
   $('pick').addEventListener('click', e => {
     if (e.target.closest('#pickX')) { e.stopPropagation(); setSis(''); return; }
     if (e.target.closest('#pickB')) { $('pickL').hidden ? abrirSis() : fecharSis(); return; }
@@ -1041,12 +1425,20 @@ function montar() {
     if (e.key === 'Escape') { e.stopPropagation(); fecharSis(); $('pickB').focus(); }
   });
   $('sheetBg').onclick = () => history.back();
+  // Enter/Espaço no alfinete e na sirene (estão dentro do card)
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const x = e.target.closest && e.target.closest('[data-pin], [data-alerta], [data-log], [data-crono], [data-est]');
+    if (x) { e.preventDefault(); e.stopPropagation(); x.click(); }
+  }, true);
   window.addEventListener('popstate', () => {
+    if (AL.ignorarPop) { AL.ignorarPop = false; return; }
+    if (AL.aberto) { fecharAlerta(true); return; }
     if (window.PSNotif && PSNotif.consumirPop()) return;          // a própria janela de notificação voltou o histórico
     if (window.PSNotif && PSNotif.aberto()) { PSNotif.fechar(true); return; }
     if (S.sheet) closeSheet();
   });
-  document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (window.PSNotif && PSNotif.aberto()) PSNotif.fechar(); else if (S.sheet) history.back(); });
+  document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (AL.aberto) fecharAlerta(); else if (window.PSNotif && PSNotif.aberto()) PSNotif.fechar(); else if (S.sheet) history.back(); });
   if (window.PSPainel) PSPainel.gesto($('pgPainel'), () => S.tab === 'painel');
 
   document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - S.checkedAt > 15000) poll(); });

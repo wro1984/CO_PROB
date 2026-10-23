@@ -5,7 +5,7 @@
    ponta a ponta para este aparelho. Quem recebe o evento `push` é o sw.js. */
 (function (root) {
   'use strict';
-  const VERSAO = '1.18.0';
+  const VERSAO = '1.31.0';
 
   const urlB64ParaBytes = s => {
     const b = atob(String(s).replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (String(s).length % 4)) % 4));

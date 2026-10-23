@@ -1,7 +1,7 @@
 /* Problemas Sistêmicos — service worker */
-const VERSION = '1.18.0';
+const VERSION = '1.31.0';
 const CACHE = 'sistemicos-v' + VERSION;
-const CORE = ['./', 'index.html', 'config.js', 'cripto.js', 'caixa.js', 'push.js', 'painel.js', 'notif.js', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
+const CORE = ['./', 'index.html', 'config.js', 'cripto.js', 'caixa.js', 'push.js', 'painel.js', 'notif.js', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/qrcode.svg'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(CORE)).then(() => self.skipWaiting()));

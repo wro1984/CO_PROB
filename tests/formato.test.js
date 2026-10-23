@@ -31,9 +31,10 @@ function extrai(src, nome) {
 function carregarParse() {
   const src = fs.readFileSync(path.join(raiz, 'app.js'), 'utf8');
   const req = src.match(/const REQUIRED = [^\n]*;/)[0];
+  const idOk = src.match(/const idOk = [^\n]*;/)[0];
   const ctx = {};
   vm.createContext(ctx);
-  vm.runInContext(`const pad = n => String(n).padStart(2, '0'); ${req} ${extrai(src, 'parseDate')} ${extrai(src, 'parseTxt')}; this.parseTxt = parseTxt;`, ctx);
+  vm.runInContext(`const pad = n => String(n).padStart(2, '0'); ${req} ${idOk} ${extrai(src, 'parseDate')} ${extrai(src, 'splitTsv')} ${extrai(src, 'parseTxt')}; this.parseTxt = parseTxt;`, ctx);
   return ctx.parseTxt;
 }
 
@@ -84,4 +85,43 @@ test('arquivo só com o cabeçalho = nenhuma notificação (sem erro)', () => {
   const r = N.ler(cab);
   assert.equal(r.ok, true);
   assert.equal(r.itens.length, 0);
+});
+
+// ---- campos entre aspas, como o Oracle SQL Developer exporta (ESTAGIO tem quebra de linha)
+const CAB = 'ID\tSISTEMA\tCHAMADO\tSTATUS\tESTAGIO\tDATA_INICIO\tDATA_FIM';
+const linha = (id, est) => [id, 'SISTEMA X', 'INC1', 'ABERTO', est, '20/10/26 08:22:00,000000000', ''].join('\t');
+
+test('campo entre aspas com quebra de linha, tabulação e aspas não quebra o arquivo', () => {
+  const est = '"Chamado aberto.\r\nEquipe com ""análise"" inicial\tok"';
+  const p = carregarParse()([CAB, linha('401', est), linha('402', ''), ''].join('\r\n'));
+  assert.equal(p.ok, true, p.err);
+  assert.equal(p.rows.length, 2);
+  const r = p.rows.find(x => x.ID === '401');
+  assert.match(r.ESTAGIO, /^Chamado aberto\./);
+  assert.match(r.ESTAGIO, /\n/);                              // a quebra de linha fica no texto
+  assert.match(r.ESTAGIO, /"análise"/);                       // "" vira uma aspa
+  assert.match(r.ESTAGIO, /\tok$/);
+  assert.equal(p.rows.find(x => x.ID === '402').ESTAGIO, '');
+  assert.equal(p.warns.length, 0);
+});
+
+test('aspas sem fechamento (arquivo cortado) é recusado com mensagem clara', () => {
+  const p = carregarParse()([CAB, linha('401', '"texto que nunca fecha'), linha('402', '')].join('\n'));
+  assert.equal(p.ok, false);
+  assert.match(p.err, /aspas sem fechamento/);
+});
+
+test('sem a coluna ESTAGIO o app lê normalmente', () => {
+  const sem = 'ID\tSISTEMA\tCHAMADO\tSTATUS\tDATA_INICIO\tDATA_FIM\n401\tSISTEMA X\tINC1\tABERTO\t20/10/26 08:22:00,000000000\t\n';
+  const p = carregarParse()(sem);
+  assert.equal(p.ok, true, p.err);
+  assert.equal(p.rows.length, 1);
+  assert.ok(!p.rows[0].ESTAGIO);
+});
+
+test('registro com ID inválido ou número de colunas diferente do cabeçalho é ignorado com aviso', () => {
+  const p = carregarParse()([CAB, linha('401', ''), linha('com espaco', ''), '403\tSISTEMA X\tINC1'].join('\n'));
+  assert.equal(p.ok, true, p.err);
+  assert.equal(JSON.stringify(p.rows.map(r => r.ID)), '["401"]');
+  assert.ok(p.warns.length >= 1);
 });
