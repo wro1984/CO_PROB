@@ -26,7 +26,7 @@
 (function (root) {
   'use strict';
 
-  const VERSAO = '1.39.0';
+  const VERSAO = '1.40.0';
   const C = (root.crypto && root.crypto.subtle) ? root.crypto : null;
   const enc = new TextEncoder();
   const APP = 'problemas-sistemicos', PREFIXO = 'ps:';
@@ -153,7 +153,14 @@
     const dados = await decifrar(k, pacote.dados, 'Os dados publicados estão corrompidos.');
     let notificacoes = null;
     if (pacote.notificacoes != null) notificacoes = await decifrar(k, pacote.notificacoes, 'As notificações publicadas estão corrompidas.');
-    return { dados, notificacoes, pushSecret: null, pushChave: null };   // aviso com o app fechado pelo HUB: etapa seguinte
+    // aviso com o app fechado: o segredo de aviso do HUB vem em `tk`, cifrado com a chave do HUB (opcional: qualquer
+    // problema aqui só desliga o aviso, nunca impede de ver os chamados)
+    let pushSecret = null;
+    if (a.tk && typeof a.tk.iv === 'string' && typeof a.tk.ct === 'string') {
+      try { pushSecret = new Uint8Array(await C.subtle.decrypt({ name: 'AES-GCM', iv: b64(a.tk.iv) }, cred.chave, b64(a.tk.ct))); } catch (e) { pushSecret = null; }
+    }
+    const pushChave = pacote.push && typeof pacote.push.chave === 'string' ? pacote.push.chave : null;
+    return { dados, notificacoes, pushSecret, pushChave };
   }
 
   // próximos acessos: usa a credencial guardada (a própria do app ou a do HUB)

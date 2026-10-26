@@ -5,7 +5,7 @@
    status por ID. O que fica no aparelho é o pacote cifrado e um cofre cifrado com chave do aparelho. */
 'use strict';
 
-const VERSION = '1.39.0';
+const VERSION = '1.40.0';
 const POLL_MS = 60 * 1000;           // conferência do arquivo
 const TICK_MS = 5 * 1000;            // relógio dos tempos em andamento
 const RECENT_MS = 60 * 60 * 1000;    // selo NOVO / ALTERAÇÕES vale por 1 hora
@@ -1608,8 +1608,9 @@ async function iniciar() {
     // sem acesso (ex.: saiu no HUB): dados guardados de antes não ficam no aparelho. O pedido de acesso em andamento fica.
     try {
       if (localStorage.getItem(K.pkg) || localStorage.getItem(K.cofre)) {
+        try { if (window.PSPush && 'serviceWorker' in navigator) await PSPush.desinscrever(await navigator.serviceWorker.getRegistration()); } catch (e) { /* segue */ }
         await PSCripto.apagarTudo();
-        localStorage.removeItem(K.pkg); localStorage.removeItem(K.cofre);
+        localStorage.removeItem(K.pkg); localStorage.removeItem(K.cofre); localStorage.removeItem(K.pushReg);
       }
     } catch (e) { /* segue */ }
     mostrarLogin(); return;

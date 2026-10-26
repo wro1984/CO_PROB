@@ -1,4 +1,4 @@
-# Problemas Sistêmicos (v1.39.0)
+# Problemas Sistêmicos (v1.40.0)
 
 PWA que mostra o andamento dos chamados de problemas sistêmicos em tempo real, a partir da mesma fonte do Painel - Nível de Serviço (a consulta de problemas sistêmicos no IPTBM). Mesmas cores da empresa do painel de NS.
 
@@ -22,8 +22,10 @@ digitar a chave**. O botão ⌂ no topo volta para o HUB.
 - Saiu no HUB: na próxima abertura o app apaga o que tinha guardado deste acesso e volta para a entrada (o pedido de
   acesso em andamento, se houver, fica).
 - Perfil do HUB sem este app: aviso na entrada, sem recarregar sem parar. A chave própria do app continua valendo.
-- Por enquanto o **aviso com o app fechado (push)** só vale para quem tem a chave própria do app; pelo HUB, o sino abre a
-  janela de Atualizações com o app aberto.
+- **Aviso com o app fechado (push)** vale também para quem entra pelo HUB (desde a 1.40.0): o segredo de aviso da pessoa
+  no HUB vem cifrado em `hub.acessos[id].tk`, e a inscrição vai com o id do HUB. O MAPI confere a prova com o segredo do
+  HUB e apaga a inscrição quando a pessoa sai do HUB, perde este app no perfil ou ganha chave nova. Sair no HUB também
+  cancela a inscrição neste aparelho.
 
 ## Pedir acesso pelo app
 Com o endereço da caixa de entrada em `config.js` (`caixa`), a tela de entrada ganha **Solicitar acesso**: matrícula, nome, **e-mail** e (opcional) o motivo. O pedido vai para a caixa (Cloudflare), o **MAPI busca**, um administrador aprova e a chave de acesso segue **por e-mail**; o app mostra o andamento (*Em análise → Aprovado / Recusado*) e, aprovado, leva para a entrada com a matrícula já preenchida. Sem `caixa` no `config.js` nada disso aparece.

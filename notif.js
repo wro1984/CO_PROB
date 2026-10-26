@@ -5,7 +5,7 @@
    Vale só STATUS = ATIVO e dentro das datas (sem início = já vale; sem fim = vale até alguém desativar). */
 (function () {
   'use strict';
-  const VERSAO = '1.39.0';
+  const VERSAO = '1.40.0';
   const K = { lidas: 'ps.notif.lidas' };
   const OBRIG = ['ID', 'TIPO', 'TITULO', 'TEXTO'];
   const TAGS = ['b', 'i', 's', 'm', 'roxo', 'verde', 'laranja', 'pink', 'link'];

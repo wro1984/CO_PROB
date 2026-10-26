@@ -20,11 +20,13 @@ async function credDoHub(chave = fx.hub.chave, salt = fx.hub.salt) {
   return { via: 'hub', id, matricula: fx.hub.matricula, chave: k, salt };
 }
 
-test('abre os chamados e as notificações pela credencial do HUB', async () => {
+test('abre os chamados, as notificações e o segredo de aviso pela credencial do HUB', async () => {
   const c = await P.abrir(fx.pacote, await credDoHub());
   assert.strictEqual(new TextDecoder().decode(c.dados), fx.esperado.dados);
   assert.strictEqual(new TextDecoder().decode(c.notificacoes), fx.esperado.notificacoes);
-  assert.strictEqual(c.pushSecret, null);        // aviso com o app fechado pelo HUB fica para a etapa seguinte
+  // aviso com o app fechado: o segredo de aviso do HUB e a chave pública vêm junto
+  assert.strictEqual(Buffer.from(c.pushSecret).toString('base64'), fx.esperado.push_secret);
+  assert.strictEqual(c.pushChave, fx.esperado.push_chave);
 });
 
 test('perfil do HUB sem este app: sem_acesso com aviso claro', async () => {
