@@ -4,7 +4,7 @@
    Os períodos são montados aqui a partir das datas de cada chamado (o sistemas.txt tem uma linha por ID). */
 (function () {
   'use strict';
-  const VERSAO = '1.31.0';
+  const VERSAO = '1.38.1';
   const HORA_INI = 8, HORA_FIM = 21, EXP = (HORA_FIM - HORA_INI) * 3600e3;   // expediente 08:00–21:00 (13h)
   const POS14 = ((14 - HORA_INI) / (HORA_FIM - HORA_INI) * 100).toFixed(2);   // marca das 14h na coluna do dia
   const LIMITE = 7;                                                         // 7 dias, 7 semanas, 7 meses
@@ -188,6 +188,8 @@
   const defs = `<defs><pattern id="sdpat" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(135)"><rect width="8" height="8" style="fill:var(--sdA)"/><rect width="4" height="8" style="fill:var(--sdB)"/></pattern></defs>`;
   // Tempo com falha: o fundo lilás é o expediente (100% = expediente inteiro do período, todas as colunas alinhadas);
   // no período em andamento o fundo sobe conforme as horas passam. O preenchimento é o tempo afetado, na mesma escala.
+  // bolinha verde com check branco (dia/período sem ocorrência)
+  const okBola = (cx, cy) => `<g class="okb" aria-hidden="true"><circle cx="${cx}" cy="${cy}" r="8.5" style="fill:var(--okc)"/><path d="M${cx - 4} ${cy + 0.2}l2.7 2.7 5.3-5.6" style="fill:none;stroke:#fff;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round"/></g>`;
   function chartT(ps, st) {
     const hh = H - B - T;
     return quadro(ps, bw => defs + ps.map((p, i) => {
@@ -196,7 +198,7 @@
       const full = p.dias * EXP, hb = s.exp / full * hh, yb = H - B - hb;
       const fundo = hb > 0 ? `<rect class="expbg" x="${cx - w / 2}" y="${yb}" width="${w}" height="${hb}" rx="4" style="fill:var(--expbg)"/>` : '';
       const yl = hb > 0 ? yb : H - B;
-      if (!s.ms) return fundo + `<text x="${cx}" y="${yl - 6}" text-anchor="middle" style="fill:var(--ok);font-size:12px;font-weight:800">✓</text>`;
+      if (!s.ms) return fundo + okBola(cx, yl - 12);   // dia sem falha: bolinha verde com check branco
       const hf = Math.max(2, s.ms / full * hh), yf = H - B - hf;
       return fundo + `<rect class="falha" x="${cx - w / 2}" y="${yf}" width="${w}" height="${hf}" rx="4" style="fill:var(--tot)"/>` +
         `<text x="${cx}" y="${yl - 17}" text-anchor="middle" style="fill:var(--ink);font-size:11px;font-weight:800;${halo}">${fmtHc(s.ms)}</text>` +
@@ -251,7 +253,7 @@
       const its = validos.filter(c => !c.indevido && noPeriodo(c, p)); its.forEach(c => idsTela.add(c.id));
       const marcada = celSel && celSel.ordem === p.ordem && celSel.sis == null;
       return its.length ? `<button class="ncel tem${marcada ? ' sel' : selOrdem === p.ordem ? ' colsel' : ''}" data-ordem="${p.ordem}" data-tot="1" aria-label="${its.length} chamado${its.length > 1 ? 's' : ''} · ${esc(rot(p))}">${its.length}</button>`
-        : `<div class="ncel zero${selOrdem === p.ordem ? ' colsel' : ''}" aria-label="nenhum chamado · ${esc(rot(p))}">0</div>`;
+        : `<div class="ncel zero${selOrdem === p.ordem ? ' colsel' : ''}" aria-label="nenhum chamado · ${esc(rot(p))}"><span class="okc" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m7 12.3 3.4 3.4L17 9"/></svg></span></div>`;
     }).join('') + `<div class="tot ntot" title="Total de chamados">${idsTela.size}</div>`;
     const temSd = ps.some(p => p.semDados);
     const sub = modo === 'DIA' ? 'Cada coluna = expediente das 08h às 21h (linha = 14h).' : modo === 'SEMANA' ? 'Cada coluna = 7 dias (seg a dom), cada dia das 08h às 21h.' : 'Cada coluna = os dias do mês, cada dia das 08h às 21h.';
