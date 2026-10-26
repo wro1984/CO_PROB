@@ -3,7 +3,7 @@
    nada interno. Sem `PS_CONFIG.caixa` nada disto aparece. */
 (function (root) {
   'use strict';
-  const VERSAO = '1.31.0';
+  const VERSAO = '1.38.1';
   const base = () => String((root.PS_CONFIG && root.PS_CONFIG.caixa) || '').replace(/\/+$/, '');
   const configurada = () => !!base();
 

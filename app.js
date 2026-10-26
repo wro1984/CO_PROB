@@ -5,7 +5,7 @@
    status por ID. O que fica no aparelho é o pacote cifrado e um cofre cifrado com chave do aparelho. */
 'use strict';
 
-const VERSION = '1.31.0';
+const VERSION = '1.38.1';
 const POLL_MS = 60 * 1000;           // conferência do arquivo
 const TICK_MS = 5 * 1000;            // relógio dos tempos em andamento
 const RECENT_MS = 60 * 60 * 1000;    // selo NOVO / ALTERAÇÕES vale por 1 hora
@@ -205,7 +205,7 @@ function diff(prev, rows, at) {
     seen.add(r.ID);
     const p = prev[r.ID];
     const base = { at, id: r.ID, sis: r.SISTEMA, inc: r.CHAMADO || '' };
-    if (!p) { out.push({ ...base, kind: 'novo', st: r.STATUS, evo: r.EVOLUCAO || '' }); continue; }
+    if (!p) { out.push({ ...base, kind: 'novo', st: r.STATUS, evo: r.EVOLUCAO || '', est: r.ESTAGIO || '' }); continue; }   // est: 1º estágio (histórico de estágios)
     const ch = [];
     for (const [f, label] of TRACK) {
       if (!(f in p)) continue;   // campo que a cópia anterior ainda não guardava (ex.: depois de atualizar o app): não é mudança
@@ -282,6 +282,10 @@ const S = {
 };
 if (!Array.isArray(S.log)) S.log = [];
 S.pins = [];   // cards fixados, o mais recente primeiro (vem do cofre cifrado; ver restaurar/guardar)
+S.pend = [];   // sino ligado: atualizações ainda sem Ciente, a mais recente primeiro (também só no cofre cifrado)
+S.pendMostrado = 0;   // quantas já foram mostradas nesta sessão (Fechar não reabre sem novidade)
+S.atSel = [];         // IDs selecionados na janela Atualizações ([] = todos)
+S.atMulti = false;    // modo seleção múltipla (botão +)
 // limpeza de restos de leitura errada: versões antigas (antes da 1.30) partiam o arquivo quando um campo livre
 // tinha quebra de linha, e pedaços de texto viravam "chamados" (ID = texto). ID válido não tem espaço nem aspas.
 const idOk = id => /^[^\s"]{1,30}$/.test(String(id == null ? '' : id));
@@ -290,6 +294,7 @@ function limparRestos() {
     if (S.snap && Object.keys(S.snap).some(k => !idOk(k))) { S.snap = null; S.limparSaiu = true; }   // cópia de comparação corrompida: recomeça do próximo arquivo, sem mudanças falsas
     S.log = S.log.filter(c => c.id == null ? (c.kind !== 'saiu-varios' || (c.ids || []).every(idOk)) : idOk(c.id));
     S.pins = (Array.isArray(S.pins) ? S.pins : []).filter(idOk);
+    S.pend = (Array.isArray(S.pend) ? S.pend : []).filter(c => c.id == null ? (c.kind !== 'saiu-varios' || (c.ids || []).every(idOk)) : idOk(c.id));
   } catch (e) { /* segue sem limpar */ }
 }
 
@@ -346,11 +351,11 @@ function guardar() {
   S.saveErr = !save(K.pkg, { text: S.pkgText, etag: S.etag, source: S.source, loadedAt: S.loadedAt });
   guardarCofre();
 }
-// só o cofre (mudanças vistas e cards fixados): usado também quando a pessoa fixa ou solta um card
+// só o cofre (mudanças vistas, cards fixados e atualizações sem Ciente): usado também quando a pessoa fixa ou solta um card
 function guardarCofre() {
   clearTimeout(cofreT);
   cofreT = setTimeout(async () => {
-    const selo = await PSCripto.selar({ snap: S.snap, log: S.log, pins: S.pins });
+    const selo = await PSCripto.selar({ snap: S.snap, log: S.log, pins: S.pins, pend: S.pend });
     try { if (selo) localStorage.setItem(K.cofre, selo); } catch (e) { /* sem espaço: o pacote guardado basta */ }
   }, 300);
 }
@@ -459,8 +464,11 @@ function changeText(c) {
 function announce(changes) {
   const imp = changes.filter(c => c.kind !== 'dados');
   if (!imp.length) return;
-  toast(imp.length === 1 ? changeText(imp[0]) : imp.length + ' mudanças nos chamados · toque para ver', true);
-  if (document.hidden && !S.pushAtivo && load(K.bell, false) && 'Notification' in window && Notification.permission === 'granted') {
+  const sino = load(K.bell, false);
+  if (sino) { S.pend = imp.concat(S.pend).slice(0, PEND_MAX); guardarCofre(); renderBell(); }
+  if (!(sino && podeAbrirAtual())) toast(imp.length === 1 ? changeText(imp[0]) : imp.length + ' mudanças nos chamados · toque para ver', true);
+  if (sino) setTimeout(() => abrirAtualizacoes(false), 50);
+  if (document.hidden && !S.pushAtivo && sino && 'Notification' in window && Notification.permission === 'granted') {
     const title = imp.length === 1 ? changeText(imp[0]) : imp.length + ' mudanças nos chamados';
     const body = imp.length === 1 ? (imp[0].inc || '') : imp.slice(0, 4).map(changeText).join('\n');
     const opt = { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: 'ps-mudancas', renotify: true };
@@ -515,7 +523,7 @@ function hiRow(r, now, comDia) {
     <div class="du num">${du}<small>${esc(st)}</small></div></button>`;
 }
 
-/* ---- 1) Ocorrências: ativas (cards grandes) + chamados de hoje + últimas mudanças ---- */
+/* ---- 1) Ocorrências: ativas (cards grandes) + ocorrências de hoje + últimas alterações ---- */
 function renderOpen() {
   const now = Date.now();
   const open = openRows();
@@ -540,7 +548,7 @@ function renderOpen() {
       ${r.IMPACTO_OPERACIONAL ? `<div class="imp">${esc(r.IMPACTO_OPERACIONAL)}</div>` : ''}
       <div class="tl"><span class="cap-t k-${t.k}">${esc(t.longo)}</span>${seg ? `<span class="para">para <b>${esc(seg)}</b></span>` : ''}</div>
       <div class="ft"><div class="timer num"><small>aberto há</small><span class="tm" role="button" tabindex="0" data-crono="${esc(r.ID)}" aria-label="Tempo decorrido: abrir o cronômetro" title="Tempo decorrido"><span class="crn">${CRONO_SVG}</span><span data-since="${r._ini.getTime()}">${fDur(now - r._ini)}</span></span></div>
-        <div class="when">${r.ESTAGIO ? `<span class="evo tem-est" role="button" tabindex="0" data-est="${esc(r.ID)}" aria-label="${esc(r.EVOLUCAO || 'Estágio')}: ver o estágio" title="Ver o estágio">${INFO_SVG}<span>${esc(r.EVOLUCAO || 'Estágio')}</span></span>` : r.EVOLUCAO ? `<span class="evo">${esc(r.EVOLUCAO)}</span>` : ''}<span class="ini num">início ${ini} ${fHM(r._ini)}</span></div></div>
+        <div class="when">${r.ESTAGIO ? `<span class="evo tem-est" role="button" tabindex="0" data-est="${esc(r.ID)}" aria-label="${esc(r.EVOLUCAO || 'Estágio')}: ver ${nEst(r) > 1 ? `os ${nEst(r)} estágios` : 'o estágio'}" title="Ver o estágio">${INFO_SVG}<span>${esc(r.EVOLUCAO || 'Estágio')}</span><span class="est-n num" aria-hidden="true">${nEst(r)}</span></span>` : r.EVOLUCAO ? `<span class="evo">${esc(r.EVOLUCAO)}</span>` : ''}<span class="ini num">início ${ini} ${fHM(r._ini)}</span></div></div>
       ${barraDia(r, now)}
       ${rk ? `<span class="selo" role="button" tabindex="0" data-log="${esc(r.ID)}" aria-label="${rk === 'novo' ? 'Novo' : 'Alterações'}: ver a última mudança" title="Ver a última mudança">${rk === 'novo' ? 'NOVO' : 'ALTERAÇÕES'}</span>` : ''}
       ${al ? `<span class="alrt" role="button" tabindex="0" data-alerta="${esc(r.ID)}" aria-label="Alerta enviado" title="Alerta enviado">${SIRENE_SVG}</span>` : ''}
@@ -563,7 +571,8 @@ function alternarPin(id) {
 const AL = { aberto: false, hist: false, ignorarPop: false };
 // janela informativa (mesma caixa para o alerta enviado e para as últimas mudanças do card)
 function abrirInfo(titulo, corpo, icone, acoes, faixa) {
-  clearInterval(AL.tick);
+  clearInterval(AL.tick); AL.tipo = '';
+  clearTimeout(toastT); $('toast').classList.remove('show');   // o balão não fica por cima da janela
   let bg = $('alBg');
   if (!bg) {
     bg = document.createElement('div'); bg.id = 'alBg'; bg.className = 'nt-bg'; bg.hidden = true;
@@ -614,33 +623,54 @@ function ultimasOcorr(r, now) {
   const exp = x => window.PSPainel ? PSPainel.msExpediente({ ini: x._ini, fimCalc: new Date(endOf(x, now)) }) : null;
   return `<h5 class="uo-t">Últimas ocorrências</h5>` + (ant.length
     ? `<table class="uo"><thead><tr><th>Data e hora</th><th>Tempo decorrido</th><th>Impacto no CO</th></tr></thead><tbody>${ant.map(x => { const e = exp(x);
-        return `<tr><td class="num">${fDM(x._ini)}/${String(x._ini.getFullYear()).slice(2)} ${fHM(x._ini)}</td><td class="num">${fDur(endOf(x, now) - x._ini)}${isOpen(x) ? ' <small>em andamento</small>' : ''}</td><td class="num">${e == null ? '—' : e ? fDur(e) : 'fora do expediente'}</td></tr>`; }).join('')}</tbody></table>
-      <p class="uo-obs">Impacto no CO = tempo dentro do expediente (08h–21h).</p>`
+        return `<tr data-uo="${esc(x.ID)}" tabindex="0" role="button" aria-label="Ver o detalhe da ocorrência de ${fDM(x._ini)} às ${fHM(x._ini)}" title="Ver o detalhe"><td class="num">${fDM(x._ini)}/${String(x._ini.getFullYear()).slice(2)} ${fHM(x._ini)}</td><td class="num">${fDur(endOf(x, now) - x._ini)}${isOpen(x) ? ' <small>em andamento</small>' : ''}</td><td class="num">${e == null ? '—' : e ? fDur(e) : 'fora do expediente'}</td></tr>`; }).join('')}</tbody></table>
+      <p class="uo-obs">Impacto no CO = tempo dentro do expediente (08h–21h). Toque numa linha para ver o detalhe.</p>`
     : `<p class="uo-vazio">Não há ocorrências anteriores deste problema na base.</p>`);
+}
+// linha das últimas ocorrências / item das Atualizações: abre o detalhe POR CIMA da janela.
+// A janela continua aberta embaixo; ao fechar o detalhe você volta para ela. Ela só fecha no botão Fechar (ou Ciente).
+function abrirOcorrencia(id) {
+  if (!S.rows.some(r => r.ID === id)) return;
+  if (AL.aberto) document.body.classList.add('sheet-sobre');
+  openSheet(id);
+  if (!S.sheet) document.body.classList.remove('sheet-sobre');
 }
 // estágio: texto livre do operador para o campo; só vale enquanto o chamado está aberto
 const INFO_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-5M12 8h.01"/></svg>';
 const resumoEst = t => String(t || '').replace(/\s+/g, ' ').trim() || '—';
+// histórico de estágios do chamado (mais recente primeiro), montado com as mudanças que este aparelho registrou:
+// o 1º estágio vem do "novo chamado"; cada troca de ESTAGIO entra com a hora em que foi vista.
+// Se o aparelho só conheceu o chamado depois de aberto, o estágio anterior à 1ª troca vista entra sem hora ("antes de …").
+function estagios(r) {
+  const ev = S.log.filter(c => c.id === r.ID && ((c.kind === 'muda' && c.ch.some(y => y.f === 'ESTAGIO')) || (c.kind === 'novo' && c.est)));
+  const out = ev.map(c => c.kind === 'novo' ? { txt: c.est, at: new Date(c.at) } : (y => ({ txt: y.para, at: new Date(c.at), de: y.de }))(c.ch.find(y => y.f === 'ESTAGIO')));
+  const velho = out[out.length - 1];
+  if (velho && velho.de && !ev.some(c => c.kind === 'novo')) out.push({ txt: velho.de, antes: velho.at });
+  const atual = String(r.ESTAGIO || '').trim();
+  if (atual && (!out.length || String(out[0].txt || '').trim() !== atual)) out.unshift({ txt: r.ESTAGIO, at: r._upd || null });
+  const lim = t => String(t || '').replace(/\s+/g, ' ').trim();
+  return out.filter(x => lim(x.txt)).filter((x, i, a) => i === 0 || lim(x.txt) !== lim(a[i - 1].txt));
+}
+const nEst = r => r.ESTAGIO ? Math.max(1, estagios(r).length) : 0;
+const dataHora = d => `${fDM(d)}/${String(d.getFullYear()).slice(2)} ${fHM(d)}`;
 function abrirEstagio(id) {
   const r = S.rows.find(x => x.ID === id); if (!r || !r.ESTAGIO) return;
-  const c = S.log.find(x => x.id === id && ((x.kind === 'muda' && x.ch.some(y => y.f === 'ESTAGIO')) || x.kind === 'novo'));
-  const quando = c ? new Date(c.at) : r._upd;
-  const qTxt = quando ? `${fDM(quando)}/${String(quando.getFullYear()).slice(2)} ${fHM(quando)}` : '';
-  abrirInfo('Estágio', `<p class="al-sis"><span class="idc num">${esc(r.ID)}</span> <b>${esc(r.SISTEMA)}</b></p>
+  const h = estagios(r), n = h.length;
+  abrirInfo(`Estágio${n > 1 ? ` <span class="nt-cont num">(${n})</span>` : ''}`, `<p class="al-sis"><span class="idc num">${esc(r.ID)}</span> <b>${esc(r.SISTEMA)}</b></p>
       <div class="est-st"><b>${esc(r.EVOLUCAO || cap(r.STATUS))}</b></div>
-      <div class="est-tx">${esc(r.ESTAGIO)}</div>
-      <div class="est-qd num">${qTxt}</div>`, `<span class="ic-roxo ic-info">${INFO_SVG}</span>`);
+      <ol class="est-hist">${h.map((x, i) => `<li${i ? '' : ' class="atual"'}><div class="est-qd num">${x.at ? dataHora(x.at) : x.antes ? `antes de ${dataHora(x.antes)}` : ''}${i ? '' : '<span class="est-at">atual</span>'}</div><div class="est-tx">${esc(x.txt)}</div></li>`).join('')}</ol>`,
+    `<span class="ic-roxo ic-info">${INFO_SVG}</span>`);
 }
 // selo NOVO / ALTERAÇÕES: mostra só a mudança mais recente desse chamado (a que o selo está anunciando)
 function abrirLog(id) {
   const r = S.rows.find(x => x.ID === id); if (!r) return;
   const now = Date.now(), ult = S.log.find(c => c.id === id && (c.kind === 'novo' || c.kind === 'muda')) || S.log.find(c => c.id === id);
   abrirInfo(ult && ult.kind === 'novo' ? 'Novo chamado' : 'Última mudança', `<p class="al-sis"><span class="idc num">${esc(r.ID)}</span> <b>${esc(r.SISTEMA)}</b></p>` +
-    (ult ? `<div class="feed log-jan">${feedItem(ult, now).replace(/data-id="[^"]*"/, 'disabled')}</div>` : '<p>Nenhuma mudança registrada neste aparelho.</p>'));
+    (ult ? `<div class="feed log-jan">${feedItem(ult, now, true).replace(/data-id="[^"]*"/, 'disabled')}</div>` : '<p>Nenhuma mudança registrada neste aparelho.</p>'));
 }
 function fecharAlerta(porHistorico) {
   if (!AL.aberto) return;
-  AL.aberto = false; clearInterval(AL.tick); $('alBg').hidden = true; document.body.classList.remove('al-on');
+  AL.aberto = false; AL.tipo = ''; clearInterval(AL.tick); $('alBg').hidden = true; document.body.classList.remove('al-on');
   if (!document.body.matches('.nt-on, .sheet-on')) document.documentElement.classList.remove('trava');
   if (!porHistorico && AL.hist) { AL.ignorarPop = true; history.back(); }
   AL.hist = false;
@@ -678,14 +708,13 @@ function renderHoje() {
   const d0 = new Date(); d0.setHours(0, 0, 0, 0);
   const list = S.rows.filter(r => r._ini >= d0 || isOpen(r) || (r._fim && r._fim >= d0))
     .sort((a, b) => (isOpen(b) - isOpen(a)) || b._ini - a._ini);
-  const val = list.filter(r => !isInd(r));
-  const ms = unionMs(val.map(r => [r._ini.getTime(), endOf(r, now)]), d0.getTime(), now);
-  $('hojeRes').innerHTML = list.length ? `${val.length} chamado${val.length === 1 ? '' : 's'}${ms ? ' · ' + fDur(ms) : ''}` : '';
+  $('ctHoje').textContent = list.length;   // mesma cápsula de contagem de "Ocorrências ativas"
   $('hoje').innerHTML = list.length ? `<div class="lst">${list.map(r => hiRow(r, now, !sameDay(r._ini, new Date(now)))).join('')}</div>`
     : `<div class="lst"><div class="empty okt">Nenhum chamado hoje.</div></div>`;
 }
 
-function feedItem(c, now) {
+// completo = true (janela do selo e "Mudanças registradas" do detalhe): o estágio aparece inteiro, com as quebras de linha; nas listas fica abreviado numa linha
+function feedItem(c, now, completo) {
   const d = new Date(c.at);
   const hr = `<div class="hr num">${fHM(d)}${sameDay(d, new Date(now)) ? '' : `<small>${fDM(d)}</small>`}</div>`;
   let tx;
@@ -702,8 +731,8 @@ function feedItem(c, now) {
     return x.para;   // demais campos: como vieram no arquivo
   };
   let itens;
-  if (c.kind === 'novo') itens = li('Novo chamado') + li('Status', cap(c.st)) + (c.evo ? li('Evolução', cap(c.evo)) : '');
-  else if (c.kind === 'muda') itens = c.ch.map(x => x.f === 'ESTAGIO' ? li('Estágio', resumoEst(x.para), 'est') : li(x.label, valor(x))).join('');
+  if (c.kind === 'novo') itens = '<li class="novo"><span class="cap-novo">Novo chamado</span></li>' + li('Status', cap(c.st)) + (c.evo ? li('Evolução', cap(c.evo)) : '');
+  else if (c.kind === 'muda') itens = c.ch.map(x => x.f === 'ESTAGIO' ? (completo ? li('Estágio', String(x.para || '').trim() || '—', 'est est-full') : li('Estágio', resumoEst(x.para), 'est')) : li(x.label, valor(x))).join('');
   else if (c.kind === 'dados') itens = li('Dados do chamado atualizados');
   else if (c.kind === 'saiu') itens = li('Saiu do arquivo');
   if (c.kind === 'saiu-varios') tx = `<span class="fs">${c.n} chamados saíram do arquivo</span><ul class="lg">${li('IDs', c.ids.slice(0, 12).join(', ') + (c.ids.length > 12 ? '…' : ''))}</ul>`;
@@ -715,7 +744,8 @@ function renderFeed() {
   const now = Date.now();
   const list = S.feedAll ? S.log : S.log.slice(0, 5);
   $('btFeed').hidden = S.log.length <= 5;
-  $('btFeed').textContent = S.feedAll ? 'Ver menos' : `Ver todas (${S.log.length})`;
+  $('btFeed').textContent = S.feedAll ? 'Ver menos' : 'Ver todas';
+  $('ctFeed').textContent = S.log.length;   // total de alterações registradas (mesma cápsula das outras seções)
   $('feed').innerHTML = list.length ? list.map(c => feedItem(c, now)).join('')
     : `<div class="empty">As mudanças de status aparecem aqui assim que acontecerem. O app confere o arquivo a cada minuto.</div>`;
 }
@@ -864,6 +894,7 @@ function render() {
 
 function tick() {
   const now = Date.now();
+  if (S.pend.length && load(K.bell, false)) abrirAtualizacoes(false);
   document.querySelectorAll('[data-since]').forEach(el => { el.textContent = fDur(now - +el.dataset.since); });
   document.querySelectorAll('[data-ago]').forEach(el => { el.textContent = fAgo(now - +el.dataset.ago); });
   document.querySelectorAll('[data-dia]').forEach(el => {
@@ -949,7 +980,7 @@ function drawDet(id, list) {
     </dl>
     ${extra.length ? `<h4>Outras colunas</h4><dl class="kv">${extra.map(c => row(esc(c), esc(r[c]) || '—')).join('')}</dl>` : ''}
     <h4>Mudanças registradas</h4>
-    ${hist.length ? `<div class="feed">${hist.map(c => feedItem(c, now).replace(/data-id="[^"]*"/, 'disabled')).join('')}</div>` : '<div class="empty" style="padding:0">Nenhuma mudança registrada neste aparelho.</div>'}
+    ${hist.length ? `<div class="feed">${hist.map(c => feedItem(c, now, true).replace(/data-id="[^"]*"/, 'disabled')).join('')}</div>` : '<div class="empty" style="padding:0">Nenhuma mudança registrada neste aparelho.</div>'}
     ${analiseHtml(r, now)}`;
   $('shX').onclick = () => history.back();
   $('shShare').onclick = () => compartilhar(r);
@@ -1036,12 +1067,19 @@ function compartilharApp() {
       <button class="cp-copiar" id="cpCopiar">${ICO.copiar}<span>Copiar link</span></button>
       <div class="cp-redes">
         <a class="cp-rede" id="cpWa" href="https://wa.me/?text=${tx}" target="_blank" rel="noopener">${ICO.conversa}<span>WhatsApp</span></a>
-        <a class="cp-rede" id="cpTeams" href="https://teams.microsoft.com/share?href=${encodeURIComponent(APP_LINK)}&msgText=${encodeURIComponent(msg)}" target="_blank" rel="noopener">${ICO.equipe}<span>Teams</span></a>
+        <button class="cp-rede" id="cpTeams" title="Copia o link e abre o aplicativo do Teams">${ICO.equipe}<span>Teams</span></button>
         <a class="cp-rede" id="cpMail" href="mailto:?subject=${encodeURIComponent('App Problemas Sistêmicos')}&body=${tx}">${ICO.email}<span>Outlook</span></a>
       </div>
       ${navigator.share ? `<button class="cp-mais" id="cpMais">${ICO.share}<span>Outras opções</span></button>` : ''}
     </div>`, icoRoxo(ICO.app), BT_VOLTAR);
   ligarVoltar();
+  // Teams da empresa bloqueia o compartilhamento pela web (pede login no navegador):
+  // copia o link e abre o aplicativo do Teams pelo atalho próprio dele (msteams:); a pessoa só escolhe a conversa e cola
+  $('cpTeams').onclick = async () => {
+    const ok = await copiarTexto(APP_LINK);
+    toast(ok ? 'Link copiado. Cole na conversa do Teams.' : 'Não foi possível copiar. Link: ' + APP_LINK, false, ok ? 6000 : 8000);
+    const a = document.createElement('a'); a.href = 'msteams://'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
+  };
   $('cpCopiar').onclick = async () => { const ok = await copiarTexto(APP_LINK); toast(ok ? 'Link do app copiado.' : 'Não foi possível copiar. Link: ' + APP_LINK, false, ok ? 2500 : 6000); };
   if ($('cpMais')) $('cpMais').onclick = async () => { try { await navigator.share({ title: 'Problemas Sistêmicos', text: msg, url: APP_LINK }); } catch (e) { /* cancelado */ } };
 }
@@ -1210,15 +1248,20 @@ function closeSheet() {
   S.sheet = null;
   $('sheet').classList.remove('show'); $('sheet').scrollTop = 0;
   $('sheetBg').style.display = 'none';
-  document.body.classList.remove('sheet-on'); if (!document.body.matches('.nt-on, .al-on')) document.documentElement.classList.remove('trava');
+  const sobre = document.body.classList.contains('sheet-sobre');
+  document.body.classList.remove('sheet-on', 'sheet-sobre'); if (!document.body.matches('.nt-on, .al-on')) document.documentElement.classList.remove('trava');
+  if (sobre && AL.aberto && $('alBox')) $('alBox').focus({ preventScroll: true });   // volta para a janela que estava embaixo
   if (l && l.onClose) l.onClose();
 }
 
 /* ---------- avisos no aparelho ---------- */
 function renderBell() {
-  const on = load(K.bell, false) && 'Notification' in window && Notification.permission === 'granted';
-  $('btBell').classList.toggle('on', !!on);
+  const on = !!load(K.bell, false), n = on ? S.pend.length : 0;
+  $('btBell').classList.toggle('on', on);
   $('btBell').setAttribute('aria-pressed', on ? 'true' : 'false');
+  let bd = $('bellBd'); if (!bd) { bd = document.createElement('span'); bd.id = 'bellBd'; bd.className = 'nbd num'; $('btBell').appendChild(bd); }
+  bd.hidden = !n; bd.textContent = n > 99 ? '99+' : n;
+  $('btBell').title = on ? (n ? `${n} atualização${n > 1 ? 'ões' : ''} sem Ciente` : 'Atualizações detalhadas ligadas (toque para desligar)') : 'Ligar atualizações detalhadas';
 }
 // push disponível: caixa configurada + chave e segredo vindos do pacote + navegador com Push API
 const pushOk = () => !!(window.PSPush && PSPush.disponivel({ caixa: window.PSCaixa, segredo: S.pushSecret, chave: S.pushChave }));
@@ -1238,33 +1281,114 @@ async function sincronizarPush() {
   } catch (e) { S.pushAtivo = false; }
   renderBell();
 }
-async function togglePush() {
-  if (load(K.bell, false) && Notification.permission === 'granted') {
-    try { await PSPush.desinscrever(await navigator.serviceWorker.ready); } catch (e) { /* segue */ }
-    try { localStorage.removeItem(K.pushReg); } catch (e) { /* segue */ }
-    save(K.bell, false); S.pushAtivo = false; renderBell(); toast('Avisos neste aparelho desligados.'); return;
-  }
+// O sino liga as duas coisas juntas: a janela "Atualizações" (com o app aberto) e, quando o MAPI
+// publicou o push e o navegador permite, o aviso no celular mesmo com o app fechado.
+async function ligarPush() {
+  if (!('Notification' in window)) return 'sem';
   let p = Notification.permission;
   if (p === 'default') { try { p = await Notification.requestPermission(); } catch (e) { p = 'denied'; } }
-  if (p !== 'granted') { toast('Os avisos estão bloqueados nas configurações do navegador para este site.'); renderBell(); return; }
-  try { await registrarPush(true); }
-  catch (e) { toast('Não consegui ligar os avisos: ' + (e.message || 'tente de novo') + '. Se estiver no iPhone, abra o app pela tela de início.', false, 7000); renderBell(); return; }
-  if (!save(K.bell, true)) { toast('Não foi possível guardar essa escolha no aparelho.'); return; }
-  renderBell();
-  toast('Avisos ligados: você será avisado de novos chamados e mudanças, mesmo com o app fechado. Pode levar alguns minutos para valer.', false, 7000);
+  if (p !== 'granted') return 'bloqueado';
+  if (!pushOk()) return 'sem';   // sem push publicado: avisa na barra só com o app aberto em segundo plano
+  try { await registrarPush(true); return 'push'; }
+  catch (e) { S.pushAtivo = false; return 'falhou:' + (e.message || 'tente de novo'); }
+}
+async function desligarPush() {
+  if (!S.pushAtivo && !load(K.pushReg, '')) return;
+  try { await PSPush.desinscrever(await navigator.serviceWorker.ready); } catch (e) { /* segue */ }
+  try { localStorage.removeItem(K.pushReg); } catch (e) { /* segue */ }
+  S.pushAtivo = false;
 }
 async function toggleBell() {
-  if (!('Notification' in window)) { toast('Este aparelho não permite avisos pelo navegador. As mudanças continuam aparecendo no app.'); return; }
-  if (pushOk()) return togglePush();
-  if (load(K.bell, false) && Notification.permission === 'granted') {
-    save(K.bell, false); renderBell(); toast('Avisos no aparelho desligados.'); return;
+  if (load(K.bell, false)) {
+    if (S.pend.length) { abrirAtualizacoes(true); return; }   // tem atualização sem Ciente: mostra a janela
+    desligarSino(); return;
   }
-  let p = Notification.permission;
-  if (p === 'default') { try { p = await Notification.requestPermission(); } catch (e) { p = 'denied'; } }
-  if (p !== 'granted') { toast('Os avisos estão bloqueados nas configurações do navegador para este site.'); renderBell(); return; }
   if (!save(K.bell, true)) { toast('Não foi possível guardar essa escolha no aparelho.'); return; }
+  S.pend = []; S.pendMostrado = 0; guardarCofre(); renderBell();
+  const r = await ligarPush();
   renderBell();
-  toast('Avisos ligados: com o app aberto em segundo plano, cada mudança de status gera um aviso.');
+  if (r === 'push') toast('Atualizações ligadas: cada mudança abre uma janela para você confirmar, e o celular avisa mesmo com o app fechado. O aviso pode levar alguns minutos para valer.', false, 7000);
+  else if (r.startsWith('falhou:')) toast('Atualizações ligadas no app, mas não consegui ligar o aviso com o app fechado: ' + r.slice(7) + '. Se estiver no iPhone, abra o app pela tela de início.', false, 7000);
+  else toast('Atualizações detalhadas ligadas: cada mudança abre uma janela para você confirmar.', false, 4500);
+}
+function desligarSino() {
+  save(K.bell, false); S.pend = []; S.pendMostrado = 0; guardarCofre(); renderBell();
+  desligarPush();
+  toast('Atualizações desligadas (também o aviso com o app fechado). Você continua vendo o resumo das mudanças.', false, 4500);
+}
+// janela "Atualizações": mesma caixa das outras janelas, com o sino; junta tudo até o Ciente
+const PEND_MAX = 100;
+const SINO_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>';
+const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
+function podeAbrirAtual() {
+  return !document.hidden && !S.sheet && !(window.PSNotif && PSNotif.aberto()) && (!AL.aberto || AL.tipo === 'atual');
+}
+function abrirAtualizacoes(manual) {
+  if (!load(K.bell, false) || !S.pend.length) return;
+  const aberta = AL.aberto && AL.tipo === 'atual';
+  if (aberta ? (S.sheet || document.hidden) : !podeAbrirAtual()) return;   // detalhe por cima ou outra janela aberta: espera
+  if (!manual && S.pend.length <= S.pendMostrado) return;   // nada novo: não redesenha (a rolagem fica onde está)
+  if (aberta && manual) return;                             // já está aberta
+  if (!aberta) { S.atSel = []; S.atMulti = false; }         // janela nova começa sem filtro
+  desenharAtual(aberta);
+}
+// cápsulas dos IDs acima da lista: bolinha com o número de atualizações encostada no canto (como a do sino);
+// tocar filtra; com o filtro ligado aparece o + à direita: ligado, cada ID tocado entra (ou sai) da seleção
+const MAIS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+const X_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+function atualIds() {
+  const cont = new Map();
+  S.pend.forEach(c => { if (c.id) cont.set(c.id, (cont.get(c.id) || 0) + 1); });   // ordem: mais recente primeiro
+  if (!cont.size) return '';
+  const sel = new Set(S.atSel), tem = sel.size > 0;
+  return `<div class="at-ids${tem ? ' com-filtro' : ''}" role="group" aria-label="Filtrar por chamado">${tem ? `<button class="at-limpa" data-atf="" aria-label="Remover filtro" title="Remover filtro">${X_SVG}</button>` : ''}<div class="at-caps">${
+    [...cont].map(([id, n]) => { const on = sel.has(id);
+      return `<button class="at-ch${on ? ' on' : ''}" data-atf="${esc(id)}" aria-pressed="${on}" aria-label="Chamado ${esc(id)}: ${n} atualizaç${n > 1 ? 'ões' : 'ão'}${on ? ' (selecionado; toque para tirar)' : ''}"><span class="idc num">${esc(id)}</span><span class="at-n num" aria-hidden="true">${n}</span></button>`; }).join('')}</div>${
+    tem ? `<button class="at-mais${S.atMulti ? ' on' : ''}" id="atMais" aria-pressed="${S.atMulti}" aria-label="${S.atMulti ? 'Seleção múltipla ligada: toque para desligar' : 'Selecionar vários chamados'}" title="${S.atMulti ? 'Seleção múltipla ligada' : 'Selecionar vários'}">${MAIS_SVG}</button>` : ''}</div>`;
+}
+const listaIds = l => l.length < 2 ? l.join('') : l.slice(0, -1).join(', ') + ' e ' + l[l.length - 1];
+// desenha a janela; manter = já estava aberta (mantém na tela os itens que estavam sendo lidos)
+function desenharAtual(manter) {
+  S.atSel = S.atSel.filter(id => S.pend.some(c => c.id === id));
+  if (!S.atSel.length) S.atMulti = false;
+  const bx = $('alBox'), y = manter && bx ? bx.scrollTop : 0, h0 = manter && bx ? bx.scrollHeight : 0;
+  const now = Date.now(), n = S.pend.length, sel = new Set(S.atSel);
+  const lista = sel.size ? S.pend.filter(c => sel.has(c.id)) : S.pend;
+  const qt = lista.length > 1 ? `estas ${lista.length} atualizações` : 'esta atualização';
+  const sub = !sel.size ? 'Mudanças nos chamados desde o último Ciente. Toque num ID para filtrar ou num item para ver o detalhe.'
+    : S.atMulti ? `Seleção múltipla: ${sel.size > 1 ? `chamados <b>${listaIds(S.atSel.map(esc))}</b>` : `chamado <b>${esc(S.atSel[0])}</b>`}. Toque em outros IDs para juntar. O Ciente confirma só ${qt}.`
+    : `Mostrando só o chamado <b>${esc(S.atSel[0])}</b>. O Ciente confirma só ${qt}. Toque no + para selecionar vários.`;
+  abrirInfo(`Atualizações <span class="nt-cont num">(${n})</span>`,
+    `<p class="at-sub">${sub}</p>
+      ${atualIds()}
+      <div class="feed log-jan at-lista">${lista.map(c => feedItem(c, now)).join('')}</div>
+      <button class="at-desl" id="atDesl">Desligar atualizações detalhadas</button>`,
+    icoRoxo(SINO_SVG), `<button class="nt-bt nt-ciente" id="atCiente">${CHECK_SVG}<span>Ciente</span></button>`);
+  AL.tipo = 'atual'; S.pendMostrado = n;
+  if (manter && y > 4) $('alBox').scrollTop = y + ($('alBox').scrollHeight - h0);
+  $('alBox').querySelectorAll('[data-atf]').forEach(b => b.onclick = () => {
+    const id = b.dataset.atf;
+    if (!id) { S.atSel = []; S.atMulti = false; }                                         // ✕: tira tudo
+    else if (S.atMulti) S.atSel = S.atSel.includes(id) ? S.atSel.filter(x => x !== id) : S.atSel.concat(id);   // vários: junta / tira
+    else S.atSel = S.atSel[0] === id ? [] : [id];                                          // um só: troca / tira
+    desenharAtual(false);
+  });
+  const mais = $('atMais');
+  if (mais) mais.onclick = () => {
+    S.atMulti = !S.atMulti;
+    if (!S.atMulti && S.atSel.length > 1) S.atSel = S.atSel.slice(0, 1);   // desligou: fica só o primeiro escolhido
+    desenharAtual(false);
+  };
+  $('atCiente').onclick = () => {
+    if (S.atSel.length) {   // filtrado: Ciente só no que está na tela; os outros continuam
+      const fora = new Set(S.atSel);
+      S.pend = S.pend.filter(c => !fora.has(c.id)); guardarCofre(); S.atSel = []; S.atMulti = false; S.pendMostrado = S.pend.length; renderBell();
+      if (S.pend.length) desenharAtual(false); else fecharAlerta();
+      return;
+    }
+    S.pend = []; guardarCofre(); S.pendMostrado = 0; renderBell(); fecharAlerta();
+  };
+  $('atDesl').onclick = () => { fecharAlerta(); desligarSino(); };
 }
 
 /* ---------- pedido de acesso (pela caixa de entrada; o MAPI busca e o administrador decide) ---------- */
@@ -1356,7 +1480,7 @@ function migrarLegado() {
 async function restaurar() {
   let cofre = null;
   try { cofre = await PSCripto.abrirSelo(localStorage.getItem(K.cofre)); } catch (e) { /* sem cofre */ }
-  if (cofre) { S.snap = cofre.snap || null; S.log = Array.isArray(cofre.log) ? cofre.log : []; S.pins = Array.isArray(cofre.pins) ? cofre.pins : []; }
+  if (cofre) { S.snap = cofre.snap || null; S.log = Array.isArray(cofre.log) ? cofre.log : []; S.pins = Array.isArray(cofre.pins) ? cofre.pins : []; S.pend = Array.isArray(cofre.pend) ? cofre.pend : []; }
   migrarLegado();
   limparRestos();
   const pk = load(K.pkg, null);
@@ -1389,6 +1513,8 @@ function montar() {
     if (pn) { e.preventDefault(); alternarPin(pn.dataset.pin); return; }
     const ale = e.target.closest('[data-alerta]');
     if (ale) { e.preventDefault(); abrirAlerta(ale.dataset.alerta); return; }
+    const uo = e.target.closest('[data-uo]');
+    if (uo) { e.preventDefault(); abrirOcorrencia(uo.dataset.uo); return; }
     const cr = e.target.closest('[data-crono]');
     if (cr) { e.preventDefault(); abrirCrono(cr.dataset.crono); return; }
     const es = e.target.closest('[data-est]');
@@ -1402,6 +1528,7 @@ function montar() {
         return;
       }
       if (it.closest('#pgOc') || it.closest('#pgHist')) { openSheet(it.dataset.id); return; }
+      if (it.closest('#alBox')) { abrirOcorrencia(it.dataset.id); return; }
     }
     const ch = e.target.closest('#chips .chip');
     if (ch) { S.filter = ch.dataset.f; S.histCorte = null; renderChips(); renderHist(); return; }
@@ -1428,17 +1555,18 @@ function montar() {
   // Enter/Espaço no alfinete e na sirene (estão dentro do card)
   document.addEventListener('keydown', e => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
-    const x = e.target.closest && e.target.closest('[data-pin], [data-alerta], [data-log], [data-crono], [data-est]');
+    const x = e.target.closest && e.target.closest('[data-pin], [data-alerta], [data-log], [data-crono], [data-est], [data-uo]');
     if (x) { e.preventDefault(); e.stopPropagation(); x.click(); }
   }, true);
   window.addEventListener('popstate', () => {
     if (AL.ignorarPop) { AL.ignorarPop = false; return; }
+    if (S.sheet && document.body.classList.contains('sheet-sobre')) { closeSheet(); return; }   // detalhe aberto por cima da janela: fecha só o detalhe
     if (AL.aberto) { fecharAlerta(true); return; }
     if (window.PSNotif && PSNotif.consumirPop()) return;          // a própria janela de notificação voltou o histórico
     if (window.PSNotif && PSNotif.aberto()) { PSNotif.fechar(true); return; }
     if (S.sheet) closeSheet();
   });
-  document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (AL.aberto) fecharAlerta(); else if (window.PSNotif && PSNotif.aberto()) PSNotif.fechar(); else if (S.sheet) history.back(); });
+  document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (S.sheet && document.body.classList.contains('sheet-sobre')) history.back(); else if (AL.aberto) fecharAlerta(); else if (window.PSNotif && PSNotif.aberto()) PSNotif.fechar(); else if (S.sheet) history.back(); });
   if (window.PSPainel) PSPainel.gesto($('pgPainel'), () => S.tab === 'painel');
 
   document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - S.checkedAt > 15000) poll(); });
