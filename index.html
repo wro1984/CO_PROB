@@ -792,6 +792,7 @@ body.ps-login header.top,body.ps-login main,body.ps-login nav.tabs{display:none}
       <div class="login-erro" id="loginErro" role="alert"></div>
       <button type="submit" class="login-btn" id="loginBtn">Entrar</button>
     </form>
+    <p class="login-ajuda">Já usa o HUB dos apps? <a class="lnk" href="/">Entrar pelo HUB</a></p>
     <p class="login-ajuda">Não tem acesso? <button type="button" class="lnk" id="loginPedir" hidden>Solicitar acesso</button><span id="loginSemCaixa"> Peça ao administrador do MAPI.</span></p>
   </div>
   <div class="login-card" id="pedidoCard" hidden>
@@ -830,6 +831,9 @@ body.ps-login header.top,body.ps-login main,body.ps-login nav.tabs{display:none}
       <h1 id="titulo">Problemas Sistêmicos</h1>
       <div class="sync"><span class="dot" id="syncDot"></span><span id="syncTx">Carregando…</span></div>
     </div>
+    <a class="ib" id="btHub" href="/" aria-label="Voltar ao HUB dos apps" title="HUB dos apps">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+    </a>
     <button class="ib" id="btNotif" hidden aria-label="Notificações" title="Notificações">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
       <span class="nbd num" hidden></span>
@@ -888,12 +892,12 @@ body.ps-login header.top,body.ps-login main,body.ps-login nav.tabs{display:none}
 <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="shTitle"></div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<script src="config.js?v=1.38.1"></script>
-<script src="cripto.js?v=1.38.1"></script>
-<script src="caixa.js?v=1.38.1"></script>
-<script src="push.js?v=1.38.1"></script>
-<script src="painel.js?v=1.38.1"></script>
-<script src="notif.js?v=1.38.1"></script>
-<script src="app.js?v=1.38.1"></script>
+<script src="config.js?v=1.39.0"></script>
+<script src="cripto.js?v=1.39.0"></script>
+<script src="caixa.js?v=1.39.0"></script>
+<script src="push.js?v=1.39.0"></script>
+<script src="painel.js?v=1.39.0"></script>
+<script src="notif.js?v=1.39.0"></script>
+<script src="app.js?v=1.39.0"></script>
 </body>
 </html>

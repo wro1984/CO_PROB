@@ -1,0 +1,40 @@
+{
+ "pacote": {
+  "app": "problemas-sistemicos",
+  "v": 1,
+  "gerado_em": "2026-10-26T22:42:04+00:00",
+  "kdf": {
+   "alg": "PBKDF2-SHA256",
+   "iter": 600000
+  },
+  "acessos": {},
+  "dados": {
+   "iv": "Al+rjv+zPCT63T1N",
+   "ct": "WkHXISwawyWQjhvHRLcVKSjHtyEvsE88TA9pa7BoCCeE7szCwyfAVJmN0qZ5IqxUQYzf8xX71SOK4m6/2fMoiYFEJOU6dGZ9ZLG5OKHslwBL1w67lhE/tjFGBAlfxEODjQCqpOFsbnvXtdbPUHGqeeocsva0+7ZcuAf4DBWp4O8Oe9FN7h83PMeTDplX2DO79im+GbzeqU/9PXXInoifK3icuvk5MnPXV6h4KrOESXDAEgXsgxpcS/voyTgzXFFRQFWzNIR7N4jnzTcCrgPNpqdkwzvTuNzV6sEIMSr6ioGxlcM1vSfVnRfr6JZ7eR3boFQeREsKlNsfwC+u4w=="
+  },
+  "notificacoes": {
+   "iv": "+3NHtb1GMkTwn37R",
+   "ct": "zECTNrcU32/E3rR/qu1JGYyFQa8HxVIPPs4="
+  },
+  "hub": {
+   "acessos": {
+    "01f76be94e2df3dd1da47cced5f52b2e3b2b5bd1858e2bed8a08effbb4f9d369": {
+     "salt": "mTOOM+CLqcHjsMDWw8ftnA==",
+     "iv": "ECJwlkpp5LzC4HmR",
+     "ct": "z6QUCHhK+f56LbrhhW4DR3r0us7gUzpEHCBGlBrzH8nqwbCubtCK/i65jELI0Swm"
+    }
+   }
+  }
+ },
+ "hub": {
+  "matricula": "H0001",
+  "chave": "lago-vento-pedra",
+  "salt": "mTOOM+CLqcHjsMDWw8ftnA==",
+  "iter": 600000
+ },
+ "esperado": {
+  "dados": "ID\tSISTEMA\tCHAMADO\tSTATUS\tCRITICIDADE\tEVOLUCAO\tSEGMENTO\tIMPACTO_OPERACIONAL\tESTAGIO\tDATA_INICIO\tDATA_FIM\tTIPO_FALHA\tGRUPOS_RESPONSAVEIS\tGRUPOS_IMPACTADOS\tAREA_ACIONADA\tALERTA_ENVIADO\tDATA_ATUALIZACAO\tDADO_ATUALIZADO\tTEMPO_DECORRIDO\tFLAG\n",
+  "notificacoes": "ID\tTITULO\n"
+ },
+ "nota": "Dados INVENTADOS. Gerado com sis_app.montar_pacote(acessos_hub=...) do MAPI."
+}

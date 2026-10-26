@@ -5,7 +5,7 @@
    status por ID. O que fica no aparelho é o pacote cifrado e um cofre cifrado com chave do aparelho. */
 'use strict';
 
-const VERSION = '1.38.1';
+const VERSION = '1.39.0';
 const POLL_MS = 60 * 1000;           // conferência do arquivo
 const TICK_MS = 5 * 1000;            // relógio dos tempos em andamento
 const RECENT_MS = 60 * 60 * 1000;    // selo NOVO / ALTERAÇÕES vale por 1 hora
@@ -372,9 +372,23 @@ async function sair() {
   location.reload();
 }
 async function perderAcesso(msg) {
-  await limparAparelho();
-  try { sessionStorage.setItem('ps.msgLogin', msg || 'Seu acesso foi removido.'); } catch (e) { /* segue */ }
+  const peloHub = S.cred && S.cred.via === 'hub';
+  await limparAparelho();     // só o que é DESTE app: a credencial do HUB fica (sair de tudo é no HUB)
+  try {
+    sessionStorage.setItem('ps.msgLogin', msg || 'Seu acesso foi removido.');
+    // entrou pelo HUB e o perfil não tem este app: na recarga não tenta o HUB de novo (senão recarregaria sem parar)
+    if (peloHub) sessionStorage.setItem('ps.ignorarHub', String(Date.now()));
+  } catch (e) { /* segue */ }
   location.reload();
+}
+// credencial do HUB, a não ser logo depois de ela ter sido recusada (ver perderAcesso)
+async function credDoHub() {
+  try {
+    const t = +sessionStorage.getItem('ps.ignorarHub') || 0;
+    if (Date.now() - t < 15000) return null;
+    sessionStorage.removeItem('ps.ignorarHub');
+  } catch (e) { /* segue */ }
+  return PSCripto.lerCredHub();
 }
 
 function mostrarLogin(msg) {
@@ -1505,7 +1519,11 @@ function montar() {
   montado = true;
   render(); renderBell();
   if (window.PSNotif && PSNotif.versao === VERSION) { PSNotif.iniciar(); $('btNotif').onclick = () => PSNotif.tocarBotao(); renderBanners(); }
-  $('btSair').onclick = sair;
+  if (S.cred && S.cred.via === 'hub') {
+    // entrou pelo HUB: sair de todos os apps é no HUB; aqui o link leva para lá
+    $('btSair').textContent = 'entrou pelo HUB';
+    $('btSair').onclick = () => { location.href = '/'; };
+  } else $('btSair').onclick = sair;
   $('quem').textContent = S.cred ? S.cred.matricula : '';
 
   document.addEventListener('click', e => {
@@ -1585,7 +1603,17 @@ async function iniciar() {
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
   if (!PSCripto.temCripto) { mostrarLogin('Este navegador não tem criptografia. Abra o app pelo endereço https.'); return; }
   S.cred = await PSCripto.lerCred();
-  if (!S.cred) { mostrarLogin(); return; }
+  if (!S.cred) S.cred = await credDoHub();   // login único: quem já entrou no HUB neste aparelho não digita de novo
+  if (!S.cred) {
+    // sem acesso (ex.: saiu no HUB): dados guardados de antes não ficam no aparelho. O pedido de acesso em andamento fica.
+    try {
+      if (localStorage.getItem(K.pkg) || localStorage.getItem(K.cofre)) {
+        await PSCripto.apagarTudo();
+        localStorage.removeItem(K.pkg); localStorage.removeItem(K.cofre);
+      }
+    } catch (e) { /* segue */ }
+    mostrarLogin(); return;
+  }
   await entrarNoApp();
 }
 if (!window.PSCripto || PSCripto.versao !== VERSION || !window.PSCaixa || PSCaixa.versao !== VERSION || !window.PSPush || PSPush.versao !== VERSION) {

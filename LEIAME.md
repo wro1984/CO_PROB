@@ -1,4 +1,4 @@
-# Problemas Sistêmicos (v1.38.1)
+# Problemas Sistêmicos (v1.39.0)
 
 PWA que mostra o andamento dos chamados de problemas sistêmicos em tempo real, a partir da mesma fonte do Painel - Nível de Serviço (a consulta de problemas sistêmicos no IPTBM). Mesmas cores da empresa do painel de NS.
 
@@ -11,6 +11,19 @@ O site é **público** (GitHub Pages), então tudo o que ele publica vem **cript
 - **No aparelho:** depois do primeiro acesso, a chave da pessoa fica guardada como `CryptoKey` **não extraível** (a chave digitada não é guardada). O pacote guardado continua cifrado, e o registro de mudanças vai para um **cofre cifrado** com uma chave do próprio aparelho. Nada de chamado, sistema ou notificação fica em texto aberto no armazenamento do navegador.
 - **Acesso removido** (ou chave trocada) no MAPI: na próxima conferência o app **apaga tudo** o que guardou e volta para a tela de entrada. O botão **Sair** (no rodapé) faz o mesmo à mão.
 - **Limite honesto:** remover um acesso vale a partir da publicação seguinte. Quem já abriu versões antigas (o histórico do Git guarda todas) mantém o que viu. Se uma chave vazar, remova o acesso e gere outra.
+
+## Login único (HUB dos apps)
+Quem entrou no **HUB dos apps** (<https://wro1984.github.io/>) neste aparelho e tem este app no perfil abre o app **sem
+digitar a chave**. O botão ⌂ no topo volta para o HUB.
+- O MAPI coloca no `dados.json` o campo `hub` (`{acessos: {<id do HUB>: {salt, iv, ct}}}`, id = SHA-256("hub:" + matrícula),
+  salt = o do HUB): a chave dos dados embrulhada com a chave do HUB de cada pessoa que tem o app.
+- O app **só lê** a credencial do HUB (IndexedDB `co-hub-acesso`, mesmo endereço): nunca apaga nem copia. Sair de todos os
+  apps é no **Sair do HUB**; no rodapé daqui aparece "entrou pelo HUB", que leva para lá.
+- Saiu no HUB: na próxima abertura o app apaga o que tinha guardado deste acesso e volta para a entrada (o pedido de
+  acesso em andamento, se houver, fica).
+- Perfil do HUB sem este app: aviso na entrada, sem recarregar sem parar. A chave própria do app continua valendo.
+- Por enquanto o **aviso com o app fechado (push)** só vale para quem tem a chave própria do app; pelo HUB, o sino abre a
+  janela de Atualizações com o app aberto.
 
 ## Pedir acesso pelo app
 Com o endereço da caixa de entrada em `config.js` (`caixa`), a tela de entrada ganha **Solicitar acesso**: matrícula, nome, **e-mail** e (opcional) o motivo. O pedido vai para a caixa (Cloudflare), o **MAPI busca**, um administrador aprova e a chave de acesso segue **por e-mail**; o app mostra o andamento (*Em análise → Aprovado / Recusado*) e, aprovado, leva para a entrada com a matrícula já preenchida. Sem `caixa` no `config.js` nada disso aparece.
