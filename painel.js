@@ -4,7 +4,7 @@
    Os períodos são montados aqui a partir das datas de cada chamado (o sistemas.txt tem uma linha por ID). */
 (function () {
   'use strict';
-  const VERSAO = '1.38.1';
+  const VERSAO = '1.39.0';
   const HORA_INI = 8, HORA_FIM = 21, EXP = (HORA_FIM - HORA_INI) * 3600e3;   // expediente 08:00–21:00 (13h)
   const POS14 = ((14 - HORA_INI) / (HORA_FIM - HORA_INI) * 100).toFixed(2);   // marca das 14h na coluna do dia
   const LIMITE = 7;                                                         // 7 dias, 7 semanas, 7 meses

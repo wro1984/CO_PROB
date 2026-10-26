@@ -26,7 +26,7 @@
 (function (root) {
   'use strict';
 
-  const VERSAO = '1.38.1';
+  const VERSAO = '1.39.0';
   const C = (root.crypto && root.crypto.subtle) ? root.crypto : null;
   const enc = new TextEncoder();
   const APP = 'problemas-sistemicos', PREFIXO = 'ps:';
@@ -116,9 +116,50 @@
     return { cred: { id, matricula: normMatricula(matricula), chave, salt: a.salt, desde: Date.now() }, ...campos };
   }
 
-  // próximos acessos: usa a credencial guardada
+  // ---------- login único pelo HUB (wro1984.github.io) ----------
+  // O HUB guarda a credencial da pessoa no IndexedDB "co-hub-acesso" deste mesmo endereço. Quem tem este app no perfil
+  // do HUB recebe, no campo `hub` do dados.json, a chave dos dados embrulhada com a chave do HUB:
+  //   hub {acessos: {<id do HUB>: {salt, iv, ct}}}    id = SHA-256("hub:" + MATRÍCULA); salt = o do HUB
+  // O app só LÊ a credencial do HUB, nunca a apaga nem a copia: sair de todos os apps é no HUB.
+  const DB_HUB = 'co-hub-acesso';
+  const lerCredHub = () => new Promise(res => {
+    if (!root.indexedDB) { res(null); return; }
+    let rq;
+    try { rq = root.indexedDB.open(DB_HUB, 1); } catch (e) { res(null); return; }
+    rq.onupgradeneeded = () => { try { rq.transaction.abort(); } catch (e) { /* segue */ } };   // sem HUB neste aparelho: não cria nada
+    rq.onerror = () => res(null);
+    rq.onsuccess = () => {
+      const d = rq.result;
+      try {
+        const g = d.transaction('cred', 'readonly').objectStore('cred').get('atual');
+        g.onsuccess = () => {
+          d.close();
+          const c = g.result;
+          res(c && c.id && c.chave && c.salt ? { via: 'hub', id: c.id, matricula: c.matricula, chave: c.chave, salt: c.salt } : null);
+        };
+        g.onerror = () => { d.close(); res(null); };
+      } catch (e) { d.close(); res(null); }
+    };
+  });
+
+  async function abrirPeloHub(pacote, cred) {
+    const a = pacote.hub && pacote.hub.acessos && pacote.hub.acessos[cred.id];
+    if (!a) throw erro('sem_acesso', 'Seu perfil no HUB não inclui este app. Fale com o administrador, ou entre com a chave própria deste app.');
+    if (a.salt !== cred.salt) throw erro('sem_acesso', 'Sua chave do HUB foi trocada. Abra o HUB e entre de novo.');
+    let rawK;
+    try { rawK = await C.subtle.decrypt({ name: 'AES-GCM', iv: b64(a.iv) }, cred.chave, b64(a.ct)); }
+    catch (e) { throw erro('sem_acesso', 'Sua chave do HUB não abre este app. Abra o HUB e entre de novo.'); }
+    const k = await C.subtle.importKey('raw', rawK, 'AES-GCM', false, ['decrypt']);
+    const dados = await decifrar(k, pacote.dados, 'Os dados publicados estão corrompidos.');
+    let notificacoes = null;
+    if (pacote.notificacoes != null) notificacoes = await decifrar(k, pacote.notificacoes, 'As notificações publicadas estão corrompidas.');
+    return { dados, notificacoes, pushSecret: null, pushChave: null };   // aviso com o app fechado pelo HUB: etapa seguinte
+  }
+
+  // próximos acessos: usa a credencial guardada (a própria do app ou a do HUB)
   async function abrir(pacote, cred) {
     conferePacote(pacote);
+    if (cred && cred.via === 'hub') return abrirPeloHub(pacote, cred);
     const a = pacote.acessos[cred.id];
     // o salt da pessoa só muda se o acesso foi refeito no MAPI: aí a chave antiga não vale mais
     if (a && a.salt !== cred.salt) throw erro('sem_acesso', 'Sua chave foi trocada. Entre de novo com a chave nova.');
@@ -177,7 +218,7 @@
     } catch (e) { return null; }
   }
 
-  const api = { versao: VERSAO, entrar, abrir, macInscricao, lerCred, salvarCred, apagarTudo, selar, abrirSelo, idDe,
+  const api = { versao: VERSAO, entrar, abrir, macInscricao, lerCred, lerCredHub, salvarCred, apagarTudo, selar, abrirSelo, idDe,
     normMatricula, normCodigo, codigoValido, temCripto: !!C };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.PSCripto = api;
 })(typeof self !== 'undefined' ? self : this);
