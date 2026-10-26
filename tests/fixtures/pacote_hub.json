@@ -2,26 +2,33 @@
  "pacote": {
   "app": "problemas-sistemicos",
   "v": 1,
-  "gerado_em": "2026-10-26T22:42:04+00:00",
+  "gerado_em": "2026-10-26T22:58:48+00:00",
   "kdf": {
    "alg": "PBKDF2-SHA256",
    "iter": 600000
   },
   "acessos": {},
   "dados": {
-   "iv": "Al+rjv+zPCT63T1N",
-   "ct": "WkHXISwawyWQjhvHRLcVKSjHtyEvsE88TA9pa7BoCCeE7szCwyfAVJmN0qZ5IqxUQYzf8xX71SOK4m6/2fMoiYFEJOU6dGZ9ZLG5OKHslwBL1w67lhE/tjFGBAlfxEODjQCqpOFsbnvXtdbPUHGqeeocsva0+7ZcuAf4DBWp4O8Oe9FN7h83PMeTDplX2DO79im+GbzeqU/9PXXInoifK3icuvk5MnPXV6h4KrOESXDAEgXsgxpcS/voyTgzXFFRQFWzNIR7N4jnzTcCrgPNpqdkwzvTuNzV6sEIMSr6ioGxlcM1vSfVnRfr6JZ7eR3boFQeREsKlNsfwC+u4w=="
+   "iv": "6CXsWqjem2NGkhUi",
+   "ct": "Gnq2BdqQm8gEZJ1Pwai6HQNxr8mM3qDi/8OrTaWVhe8jmIF/iRP2GVo6z/idZZG332aDUMDMqGhqu/NjjNIE0+2xLnmKf4HLMpMVovKmFLbNaEM+IaDv7KxuqT/MIsjiXtduFl1x72gQwGOQt68TeZ/P+6XOv+4sxAuWQOWDf6feKmucMi60PVw1EGLkeS2O4UhunvsbzLgDHyxSEOG7fg7f11nQMdTqBeEiaBB17MbLSQqHqFZC9KA986LQocqR+4Tboro1RNCo1RezUTmGIL6MhUL+q1B97w8rBzfiuZcOsxqmf1vbQ4ymJpAw64D7S4arXqkwYFTthBYmJA=="
   },
   "notificacoes": {
-   "iv": "+3NHtb1GMkTwn37R",
-   "ct": "zECTNrcU32/E3rR/qu1JGYyFQa8HxVIPPs4="
+   "iv": "3I+12smt2k1YbrRj",
+   "ct": "m5HvT0a2B9ncn3yMnR3VcfYRAik+7EfmDCA="
+  },
+  "push": {
+   "chave": "BMsv4LALawBaXUWS2fuMjwbG97oT9BAFi6HQyvJSVjv7qfE_kmmppvLTF1caMGkChJspyELqY984pqTbUzGE-UA"
   },
   "hub": {
    "acessos": {
     "01f76be94e2df3dd1da47cced5f52b2e3b2b5bd1858e2bed8a08effbb4f9d369": {
-     "salt": "mTOOM+CLqcHjsMDWw8ftnA==",
-     "iv": "ECJwlkpp5LzC4HmR",
-     "ct": "z6QUCHhK+f56LbrhhW4DR3r0us7gUzpEHCBGlBrzH8nqwbCubtCK/i65jELI0Swm"
+     "salt": "iOw9KLJjalY+Sabziu7+dA==",
+     "iv": "rGgTPtfzApjjbTEh",
+     "ct": "OYY4gWCi2h07A52ITh06nR2KokaWBtdfoPbIV9PQjPX7X4aSqsKZGoUTcQy1qmid",
+     "tk": {
+      "iv": "O6rIHUYd9RWTS9aT",
+      "ct": "Qs8lERnJLV2fWcZa8MBLMa5oyvpyahbkKEObUguThGCINkexrzb7n42mIWEBVuR7"
+     }
     }
    }
   }
@@ -29,12 +36,14 @@
  "hub": {
   "matricula": "H0001",
   "chave": "lago-vento-pedra",
-  "salt": "mTOOM+CLqcHjsMDWw8ftnA==",
+  "salt": "iOw9KLJjalY+Sabziu7+dA==",
   "iter": 600000
  },
  "esperado": {
   "dados": "ID\tSISTEMA\tCHAMADO\tSTATUS\tCRITICIDADE\tEVOLUCAO\tSEGMENTO\tIMPACTO_OPERACIONAL\tESTAGIO\tDATA_INICIO\tDATA_FIM\tTIPO_FALHA\tGRUPOS_RESPONSAVEIS\tGRUPOS_IMPACTADOS\tAREA_ACIONADA\tALERTA_ENVIADO\tDATA_ATUALIZACAO\tDADO_ATUALIZADO\tTEMPO_DECORRIDO\tFLAG\n",
-  "notificacoes": "ID\tTITULO\n"
+  "notificacoes": "ID\tTITULO\n",
+  "push_secret": "GSD5qsk/9YbDCm9uoHoSzMwK+IidZTEPHWEZbaDA9wY=",
+  "push_chave": "BMsv4LALawBaXUWS2fuMjwbG97oT9BAFi6HQyvJSVjv7qfE_kmmppvLTF1caMGkChJspyELqY984pqTbUzGE-UA"
  },
  "nota": "Dados INVENTADOS. Gerado com sis_app.montar_pacote(acessos_hub=...) do MAPI."
 }
