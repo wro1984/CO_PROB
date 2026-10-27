@@ -5,7 +5,7 @@
    status por ID. O que fica no aparelho é o pacote cifrado e um cofre cifrado com chave do aparelho. */
 'use strict';
 
-const VERSION = '1.40.0';
+const VERSION = '1.41.0';
 const POLL_MS = 60 * 1000;           // conferência do arquivo
 const TICK_MS = 5 * 1000;            // relógio dos tempos em andamento
 const RECENT_MS = 60 * 60 * 1000;    // selo NOVO / ALTERAÇÕES vale por 1 hora
