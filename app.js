@@ -5,7 +5,10 @@
    status por ID. O que fica no aparelho é o pacote cifrado e um cofre cifrado com chave do aparelho. */
 'use strict';
 
-const VERSION = '1.41.0';
+const VERSION = '1.42.0';
+// aberto dentro do "HUB de Apps" do MAPI (?mapi): sem login, sem baixar o dados.json, sem service worker, sem aviso no celular (push);
+// os chamados e as notificações chegam do MAPI por mensagem (só da janela pai). O cofre cifrado (mudanças vistas e cards fixados) segue valendo.
+const MODO_MAPI = window.parent !== window && new URLSearchParams(location.search).has('mapi');
 const POLL_MS = 60 * 1000;           // conferência do arquivo
 const TICK_MS = 5 * 1000;            // relógio dos tempos em andamento
 const RECENT_MS = 60 * 60 * 1000;    // selo NOVO / ALTERAÇÕES vale por 1 hora
@@ -348,7 +351,7 @@ async function aplicarPacote(pkgText, meta, fromStore) {
 // guarda no aparelho: o pacote (já cifrado) e o cofre (mudanças vistas), cifrado com a chave do aparelho
 let cofreT = 0;
 function guardar() {
-  S.saveErr = !save(K.pkg, { text: S.pkgText, etag: S.etag, source: S.source, loadedAt: S.loadedAt });
+  if (!MODO_MAPI) S.saveErr = !save(K.pkg, { text: S.pkgText, etag: S.etag, source: S.source, loadedAt: S.loadedAt });   // no modo MAPI não há pacote para guardar
   guardarCofre();
 }
 // só o cofre (mudanças vistas, cards fixados e atualizações sem Ciente): usado também quando a pessoa fixa ou solta um card
@@ -430,9 +433,59 @@ async function fazerLogin(ev) {
   }
 }
 
+/* ---------- modo MAPI: os dados vêm por mensagem ---------- */
+// O app avisa `co-prob:pronto` (só o aviso, sem dado algum) e o MAPI responde `co-prob:dados` com {dados:{sistemas, notificacoes}} (ou {erro}),
+// a quem tem o app liberado na matrícula. Só vale a mensagem da janela pai.
+let pedidoMapi = null;
+function pedirAoMapi() {
+  return new Promise((res, rej) => {
+    if (pedidoMapi) { pedidoMapi.res.push(res); pedidoMapi.rej.push(rej); return; }
+    pedidoMapi = { res: [res], rej: [rej], t: setTimeout(() => { const p = pedidoMapi; pedidoMapi = null; p.rej.forEach(f => f(new Error('O MAPI não respondeu. Volte e abra o app de novo pelo HUB de Apps do MAPI.'))); }, 25000) };
+    window.parent.postMessage({ tipo: 'co-prob:pronto', versao: VERSION }, '*');
+  });
+}
+function receberDoMapi(e) {
+  if (e.source !== window.parent || !e.data || e.data.tipo !== 'co-prob:dados' || !pedidoMapi) return;
+  const p = pedidoMapi; pedidoMapi = null; clearTimeout(p.t);
+  if (e.data.erro) p.rej.forEach(f => f(new Error(String(e.data.erro)))); else p.res.forEach(f => f(e.data.dados));
+}
+async function pollMapi(manual) {
+  S.busy = true;
+  $('btRefresh').classList.add('spin');
+  try {
+    const d = await pedirAoMapi();
+    if (!d || typeof d.sistemas !== 'string') throw new Error('O MAPI mandou dados em formato desconhecido.');
+    S.net = 'ok';
+    S.checkedAt = Date.now();
+    const chave = d.sistemas + '\u0000' + (typeof d.notificacoes === 'string' ? d.notificacoes : '');
+    if (chave === S.mapiChave) {
+      if (manual) toast('Nenhuma mudança desde a última conferência.');
+    } else {
+      const meta = { etag: '', source: 'mapi', loadedAt: Date.now() };
+      const p = applyText(d.sistemas, meta, false);
+      if (!p.ok) S.fileErr = p.err;
+      else {
+        S.fileErr = ''; S.mapiChave = chave;
+        if (window.PSNotif && PSNotif.versao === VERSION) PSNotif.aplicar(typeof d.notificacoes === 'string' ? d.notificacoes : null, meta);
+        guardar();
+      }
+      render();
+    }
+  } catch (e) {
+    S.net = 'off';
+    if (!S.rows.length) S.fileErr = e.message || 'Não consegui ler os dados.';
+    if (manual) toast('Sem resposta do MAPI. Mostrando a última leitura.');
+  } finally {
+    S.busy = false;
+    $('btRefresh').classList.remove('spin');
+    renderSync(); renderBanners();
+  }
+}
+
 /* ---------- conferência periódica ---------- */
 async function poll(manual) {
   if (S.busy || !S.cred) return;
+  if (MODO_MAPI) return pollMapi(manual);
   S.busy = true;
   $('btRefresh').classList.add('spin');
   try {
@@ -1497,6 +1550,7 @@ async function restaurar() {
   if (cofre) { S.snap = cofre.snap || null; S.log = Array.isArray(cofre.log) ? cofre.log : []; S.pins = Array.isArray(cofre.pins) ? cofre.pins : []; S.pend = Array.isArray(cofre.pend) ? cofre.pend : []; }
   migrarLegado();
   limparRestos();
+  if (MODO_MAPI) return true;     // sem pacote guardado: só o cofre (acima); os dados vêm do MAPI
   const pk = load(K.pkg, null);
   if (pk && pk.text) {
     const p = await aplicarPacote(pk.text, { etag: pk.etag, source: pk.source, loadedAt: pk.loadedAt }, true);
@@ -1519,12 +1573,14 @@ function montar() {
   montado = true;
   render(); renderBell();
   if (window.PSNotif && PSNotif.versao === VERSION) { PSNotif.iniciar(); $('btNotif').onclick = () => PSNotif.tocarBotao(); renderBanners(); }
-  if (S.cred && S.cred.via === 'hub') {
+  if (MODO_MAPI) {
+    $('quem').textContent = '';
+  } else if (S.cred && S.cred.via === 'hub') {
     // entrou pelo HUB: sair de todos os apps é no HUB; aqui o link leva para lá
     $('btSair').textContent = 'entrou pelo HUB';
     $('btSair').onclick = () => { location.href = '/'; };
   } else $('btSair').onclick = sair;
-  $('quem').textContent = S.cred ? S.cred.matricula : '';
+  if (!MODO_MAPI) $('quem').textContent = S.cred ? S.cred.matricula : '';
 
   document.addEventListener('click', e => {
     const pn = e.target.closest('[data-pin]');
@@ -1597,6 +1653,14 @@ function montar() {
 
 async function iniciar() {
   $('ver').textContent = VERSION;
+  if (MODO_MAPI) {
+    document.body.classList.add('modo-mapi');
+    window.addEventListener('message', receberDoMapi);
+    if (!PSCripto.temCripto) { document.body.textContent = 'Este navegador não tem criptografia: abra o MAPI pelo endereço https.'; return; }
+    S.cred = { via: 'mapi', matricula: '' };      // sem credencial própria: o acesso é conferido pelo MAPI a cada pedido
+    await entrarNoApp();
+    return;
+  }
   $('loginForm').addEventListener('submit', fazerLogin);
   iniciarPedido();
   $('loginVer').onclick = () => { const i = $('loginChave'); i.type = i.type === 'password' ? 'text' : 'password'; $('loginVer').textContent = i.type === 'password' ? 'mostrar' : 'ocultar'; };
