@@ -1,4 +1,4 @@
-# Problemas Sistêmicos (v1.40.0)
+# Problemas Sistêmicos (v1.42.0)
 
 PWA que mostra o andamento dos chamados de problemas sistêmicos em tempo real, a partir da mesma fonte do Painel - Nível de Serviço (a consulta de problemas sistêmicos no IPTBM). Mesmas cores da empresa do painel de NS.
 
@@ -165,3 +165,9 @@ O `sistemas.txt` tem uma linha por chamado, então os períodos são montados pe
 
 ## Testes
 `npm test` (ou `node --test tests/cripto.test.js tests/formato.test.js tests/caixa.test.js tests/push.test.js`) (Node 18 ou mais novo, sem dependências). Usam `tests/fixtures/pacote.json`, gerado pelo MAPI (inclui o segredo de push e uma prova de inscrição calculada pelo MAPI, que o app precisa reproduzir) (`tests/gerar_fixture_sis_app.py` do repositório do MAPI), e conferem que o app abre o que o MAPI cifra e lê os TXT que o MAPI gera. Se o formato do pacote ou dos TXT mudar, gere o arquivo de novo.
+
+## Modo MAPI (desde a v1.42.0)
+Dentro do **HUB de Apps do MAPI** o app abre num quadro com `?mapi` na URL (`MODO_MAPI` em `app.js`): sem login, sem baixar o `dados.json`, sem service worker e sem aviso no celular (push). O app avisa `co-prob:pronto` (só o aviso) e o MAPI responde `co-prob:dados` com `{dados:{sistemas, notificacoes}}` (ou `{erro}`): os mesmos TXT que o app abriria do `dados.json`, já abertos; só vale a mensagem da janela pai. Cada conferência (a cada minuto) repete o pedido.
+- O **cofre cifrado** (mudanças vistas, cards fixados) continua valendo, com a chave do aparelho; o pacote dos chamados **não** é guardado.
+- Somem o botão do HUB, o sino e o "Sair" (não fazem sentido dentro do MAPI). O MAPI só entrega os dados a quem tem o app liberado na matrícula.
+- Fora de um quadro, `?mapi` não muda nada (o login continua obrigatório). Não mude os nomes das mensagens sem mudar `hub_embed.py` do MAPI junto. Testes: `tests/modo_mapi.test.js`.
