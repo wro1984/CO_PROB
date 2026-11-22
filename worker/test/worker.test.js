@@ -139,7 +139,7 @@ test("rotas do MAPI exigem a chave (inclusive as de push)", async () => {
   assert.equal((await admin(env, "POST", "/admin/decisao", { protocolo: "PS-NADA", status: "aprovado" })).status, 404);
   assert.equal((await admin(env, "POST", "/admin/decisao", { protocolo: "PS-NADA", status: "qualquer" })).status, 400);
   const ping = await (await admin(env, "GET", "/admin/ping")).json();
-  assert.deepEqual([ping.ok, ping.total, ping.novos, ping.push_novas, ping.versao], [true, 0, 0, 0, "2.0.0"]);
+  assert.deepEqual([ping.ok, ping.total, ping.novos, ping.push_novas, ping.versao], [true, 0, 0, 0, "2.1.0"]);
 });
 
 test("CORS: só a origem do app; as rotas do MAPI não têm CORS", async () => {
@@ -185,4 +185,26 @@ test("raiz e rota desconhecida", async () => {
   const env = novoEnv();
   assert.equal((await handle(new Request("https://x/"), env)).status, 200);
   assert.equal((await handle(new Request("https://x/nada"), env)).status, 404);
+});
+
+test("push: lista de servidores seguidos (extra) é guardada, entregue ao MAPI e só aceita o formato certo", async () => {
+  const env = novoEnv();
+  const ids = ["a1b2c3d4e5f6", "0123456789ab"].join(",");
+  assert.equal((await post(env, "/push/inscrever", { ...INSCRICAO, extra: ids })).status, 202);
+  assert.equal((await post(env, "/push/inscrever", { ...INSCRICAO, endpoint: "https://fcm.googleapis.com/fcm/send/dois", extra: "*" })).status, 202);
+  assert.equal((await post(env, "/push/inscrever", { ...INSCRICAO, endpoint: "https://fcm.googleapis.com/fcm/send/tres" })).status, 202);   // sem extra: como antes
+  const { inscricoes } = await (await admin(env, "GET", "/admin/push/novos")).json();
+  assert.deepEqual(inscricoes.map((i) => i.extra), [ids, "*", ""]);
+  for (const ruim of ["10.1.1.1", "a1b2c3d4e5f6;drop", "zzzzzzzzzzzz", Array(31).fill("a1b2c3d4e5f6").join(",")]) {
+    assert.equal((await post(env, "/push/inscrever", { ...INSCRICAO, extra: ruim })).status, 400, ruim.slice(0, 30));
+  }
+});
+
+test("push: D1 sem a coluna extra (migração pendente) continua aceitando e entregando inscrições sem extra", async () => {
+  const env = novoEnv();
+  env.DB.raw.exec("ALTER TABLE push_inscricoes DROP COLUMN extra");
+  assert.equal((await post(env, "/push/inscrever", INSCRICAO)).status, 202);
+  const { inscricoes } = await (await admin(env, "GET", "/admin/push/novos")).json();
+  assert.equal(inscricoes.length, 1);
+  assert.equal(inscricoes[0].extra, undefined);
 });
