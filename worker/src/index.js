@@ -8,7 +8,7 @@
  * Rotas públicas (o app):
  *   POST /solicitar      {matricula, nome, email, justificativa?}          -> {protocolo, token}
  *   POST /status         {protocolo, token}                                -> {status, motivo, atualizado_em}
- *   POST /push/inscrever {id, endpoint, p256dh, auth, mac}                 -> 202
+ *   POST /push/inscrever {id, endpoint, p256dh, auth, mac, extra?}         -> 202   (extra: lista de servidores seguidos do app Sustentação)
  * Rotas do MAPI (Authorization: Bearer <MAPI_CHAVE>):
  *   GET  /admin/ping
  *   GET  /admin/novos                       pedidos ainda não buscados
@@ -20,12 +20,16 @@
  * Privacidade: dados pessoais ficam aqui só até o MAPI confirmar o recebimento (ack). O cron diário apaga o que sobrou
  * (pedidos com mais de RETENCAO_DIAS, inscrições com mais de 7 dias). O IP nunca é gravado, só um hash com sal.
  *
+ * `extra` (opcional, só o app Sustentação usa): a lista dos servidores que a pessoa acompanha ("*" ou até 30 ids de 12 hex separados por
+ * vírgula). Entra na prova (mac), que o MAPI confere; aqui só se confere o formato e o tamanho. Sem a coluna `extra` no D1 (migração não
+ * feita) as inscrições SEM extra seguem funcionando como antes; com extra pedem a migração (ver schema.sql).
+ *
  * A inscrição de push NÃO é validada aqui (a caixa não conhece as chaves): o MAPI confere a prova (mac) e o endereço
  * antes de usar; inscrição sem prova válida é descartada lá. Aqui só se limita volume e se exige endereço de serviço
  * de push conhecido.
  */
 
-const VERSAO = "2.0.0";
+const VERSAO = "2.1.0";
 const STATUS_DECISAO = ["aprovado", "recusado", "revogado"];
 const MAX_CORPO = 4096;
 // serviços de push dos navegadores (sufixo do host); o MAPI confere de novo
@@ -193,7 +197,9 @@ async function pushInscrever(request, env) {
   const p256dh = limpar(c.p256dh, 120);
   const auth = limpar(c.auth, 60);
   const mac = limpar(c.mac, 80).toLowerCase();
+  const extra = limpar(c.extra, 420).toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(id) || !/^[0-9a-f]{64}$/.test(mac)) throw new Erro(400, "Inscrição inválida.");
+  if (extra && !/^(\*|[0-9a-f]{12}(,[0-9a-f]{12}){0,29})$/.test(extra)) throw new Erro(400, "Inscrição inválida.");
   if (!endpointPushOk(endpoint) || b64urlBytes(p256dh) !== 65 || b64urlBytes(auth) !== 16) throw new Erro(400, "Inscrição inválida.");
   const origem = await origemHash(request, env);
   const desde = new Date(Date.now() - 3600 * 1000).toISOString();
@@ -203,9 +209,15 @@ async function pushInscrever(request, env) {
   if ((porOrigem?.n || 0) >= numero(env.LIMITE_PUSH_HORA, 60) || (pendentes?.n || 0) >= numero(env.MAX_PUSH_PENDENTES, 2000)) {
     throw new Erro(429, "Muitas inscrições agora. Tente novamente mais tarde.");
   }
-  await env.DB.prepare(
-    "INSERT INTO push_inscricoes (id, endpoint, p256dh, auth, mac, origem_hash, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .bind(id, endpoint, p256dh, auth, mac, origem, agora()).run();
+  if (extra) {
+    await env.DB.prepare(
+      "INSERT INTO push_inscricoes (id, endpoint, p256dh, auth, mac, origem_hash, criado_em, extra) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(id, endpoint, p256dh, auth, mac, origem, agora(), extra).run();
+  } else {
+    await env.DB.prepare(
+      "INSERT INTO push_inscricoes (id, endpoint, p256dh, auth, mac, origem_hash, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(id, endpoint, p256dh, auth, mac, origem, agora()).run();
+  }
   return { ok: true };
 }
 
@@ -257,8 +269,12 @@ async function adminDecisao(request, env) {
 }
 
 async function adminPushNovos(env) {
-  const r = await env.DB.prepare(
-    "SELECT rid, id, endpoint, p256dh, auth, mac FROM push_inscricoes ORDER BY rid LIMIT 100").all();
+  let r;
+  try {
+    r = await env.DB.prepare("SELECT rid, id, endpoint, p256dh, auth, mac, extra FROM push_inscricoes ORDER BY rid LIMIT 100").all();
+  } catch (e) {          // D1 ainda sem a coluna `extra` (migração não feita): entrega como antes
+    r = await env.DB.prepare("SELECT rid, id, endpoint, p256dh, auth, mac FROM push_inscricoes ORDER BY rid LIMIT 100").all();
+  }
   return { inscricoes: r.results || [] };
 }
 

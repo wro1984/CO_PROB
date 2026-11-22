@@ -25,9 +25,13 @@ CREATE TABLE IF NOT EXISTS push_inscricoes (
   auth          TEXT NOT NULL,
   mac           TEXT NOT NULL,                    -- prova de que quem abriu o pacote fez a inscrição (o MAPI confere)
   origem_hash   TEXT NOT NULL,
-  criado_em     TEXT NOT NULL
+  criado_em     TEXT NOT NULL,
+  extra         TEXT NOT NULL DEFAULT ''          -- app Sustentação: servidores seguidos ("*" ou ids de 12 hex separados por vírgula), coberto pelo mac
 );
 CREATE INDEX IF NOT EXISTS ix_push_origem ON push_inscricoes (origem_hash, criado_em);
 
 -- MIGRAÇÃO (só se a tabela pedidos já existia sem a coluna email; dá erro "duplicate column" se já tiver, pode ignorar):
 -- ALTER TABLE pedidos ADD COLUMN email TEXT;
+
+-- MIGRAÇÃO v2.1.0 (D1 que já existia sem a coluna extra; dá erro "duplicate column" se já tiver, pode ignorar):
+-- ALTER TABLE push_inscricoes ADD COLUMN extra TEXT NOT NULL DEFAULT '';
