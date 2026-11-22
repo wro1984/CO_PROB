@@ -11,7 +11,7 @@ inscrições com mais de 7. O IP nunca é gravado.
 1. **Banco:** *Storage & Databases → D1 → Create database*, nome `problemas-sistemicos`. Na aba **Console**, rode o conteúdo de `schema-painel.sql`
    **um comando por vez** (o console junta as linhas; por isso este arquivo não tem comentários).
 2. **Worker:** *Compute → Workers & Pages → Create → Hello World*, nome à sua escolha (o endereço vira `https://<nome>.<subdominio>.workers.dev`).
-   **Edit code**, apague tudo, cole o `src/index.js` e **Deploy**. Abrir o endereço deve mostrar `{"servico":"problemas-sistemicos-caixa","versao":"2.0.0"}`.
+   **Edit code**, apague tudo, cole o `src/index.js` e **Deploy**. Abrir o endereço deve mostrar `{"servico":"problemas-sistemicos-caixa","versao":"2.1.0"}`.
 3. **Banco no Worker:** *Settings → Bindings → Add → D1 database*, variável **`DB`** (maiúsculas), banco `problemas-sistemicos`.
 4. **Variáveis** (*Settings → Variables and Secrets*):
 
@@ -34,6 +34,11 @@ inscrições com mais de 7. O IP nunca é gravado.
 
 ## Atualizar a partir da versão 1 (só pedidos, sem e-mail)
 Rode `ALTER TABLE pedidos ADD COLUMN email TEXT;` e o `CREATE TABLE ... push_inscricoes` de `schema-painel.sql`; depois cole o novo `src/index.js` e faça o deploy.
+
+## Atualizar para a 2.1.0 (campo `extra` do app Sustentação)
+1. No **D1** (console), rode: `ALTER TABLE push_inscricoes ADD COLUMN extra TEXT NOT NULL DEFAULT '';` (se disser "duplicate column", já estava feito).
+2. Cole o novo `src/index.js` e faça o **Deploy**. O endereço deve mostrar a versão `2.1.0`.
+3. Nada muda nas variáveis. Sem o passo 1, as inscrições **sem** `extra` (Problemas Sistêmicos, COE, Checklist) seguem funcionando; só as da Sustentação, que levam `extra`, falham até a migração.
 
 ## Testes
 `npm install && npm test` (Node 22+; usa um SQLite em memória no lugar do D1). Rodar local de ponta a ponta:
